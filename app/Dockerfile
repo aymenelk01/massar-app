@@ -13,7 +13,7 @@ COPY package*.json ./
 RUN npm ci --only=production
 
 # Install MySQL client for database interactions (if needed by the application)
-RUN apk add --no-cache mysql-client
+RUN apk add --no-cache mysql80-client
 
 # Copy the rest of the application files
 COPY . .
