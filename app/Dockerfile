@@ -12,6 +12,9 @@ COPY package*.json ./
 # Install only production dependencies using npm clean install
 RUN npm ci --only=production
 
+# Install MySQL client for database interactions (if needed by the application)
+RUN apk add --no-cache mysql-client
+
 # Copy the rest of the application files
 COPY . .
 
