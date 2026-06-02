@@ -3,6 +3,8 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'app/**'    
 
 permissions:
   contents: read
@@ -19,6 +21,14 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Check for static file changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            static:
+              - 'app/static/**'  
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -56,5 +66,6 @@ jobs:
             --services $ECS_SERVICE      
 
       - name: upload static files to S3
+        if: steps.filter.outputs.static == 'true'
         run: |
           aws s3 sync ./app/static s3://$S3_BUCKET_NAME/static --delete     
