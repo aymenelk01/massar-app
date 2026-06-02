@@ -1,4 +1,4 @@
-FROM node:18-alpine
+FROM node:18
 
 # Set node environment to production
 ENV NODE_ENV=production
@@ -13,7 +13,7 @@ COPY package*.json ./
 RUN npm ci --only=production
 
 # Install MySQL client for database interactions (if needed by the application)
-RUN apk add --no-cache mysql80-client
+RUN apt-get update && apt-get install -y default-mysql-client && rm -rf /var/lib/apt/lists/*
 
 # Copy the rest of the application files
 COPY . .
