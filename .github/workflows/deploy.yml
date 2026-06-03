@@ -39,8 +39,8 @@ jobs:
       AWS_REGION: eu-south-1
       ECS_CLUSTER: dev-cluster
       ECS_SERVICE: dev-service
-      ECS_TASK_FAMILY: dev-task-family
-      CONTAINER_NAME: dev-app-container
+      ECS_TASK_FAMILY: dev-task
+      CONTAINER_NAME: massar-app
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
