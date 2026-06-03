@@ -4,7 +4,7 @@
    ============================================================ */
 
 /// API base URL — replace with your actual CloudFront 
-const API_BASE_URL = "https://d1234567890abcdef.cloudfront.net";
+const API_BASE_URL = "https://d7w3mygjx3srq.cloudfront.net/";
 
 // DOM references
 const form           = document.getElementById("login-form");
