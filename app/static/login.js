@@ -1,7 +1,7 @@
-/* ============================================================
+/* =============================================================
    login.js — Massar Portal Login Logic
    POST /login → store access_token → redirect to results.html
-   ============================================================ */
+   ============================================================= */
 
 /// API base URL — replace with your actual CloudFront 
 const API_BASE_URL = "https://d7w3mygjx3srq.cloudfront.net";
