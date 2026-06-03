@@ -28,8 +28,8 @@ jobs:
             static:
               - 'app/static/**'
             app:
-              - 'app/**'
-              - '!app/static/**'
+              - 'app/backend/**'
+              
 
   deploy-app:
     needs: check-changes
