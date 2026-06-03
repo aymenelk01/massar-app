@@ -60,7 +60,7 @@ jobs:
         run: echo "IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/ecr-repository-dev" >> $GITHUB_ENV  
 
       - name: Build the Docker image
-        run: docker build -t $IMAGE_URI:${{ github.sha }} -t $IMAGE_URI:latest ./app
+        run: docker build -t $IMAGE_URI:${{ github.sha }} -t $IMAGE_URI:latest ./app/backend
 
       - name: Push the Docker image
         run: |
