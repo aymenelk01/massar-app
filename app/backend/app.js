@@ -15,7 +15,6 @@ const mysql = require("mysql2/promise");
 const Redis = require("ioredis");
 const { CognitoJwtVerifier } = require("aws-jwt-verify");
 const { SecretsManagerClient, GetSecretValueCommand } = require("@aws-sdk/client-secrets-manager");
-const { CognitoIdentityProviderClient, InitiateAuthCommand } = require("@aws-sdk/client-cognito-identity-provider");
 const { SQSClient, SendMessageCommand } = require("@aws-sdk/client-sqs");
 
 const app = express();
@@ -28,7 +27,6 @@ const PORT = process.env.PORT || 3000;
 // AWS Clients Instantiations (Credential loading is managed by ECS Task Role)
 const secretsClient = new SecretsManagerClient({ region: REGION });
 const sqsClient = new SQSClient({ region: REGION });
-const cognitoClient = new CognitoIdentityProviderClient({ region: REGION });
 
 // Global holders for Database Credentials and Pool
 let dbCredentials = null;
@@ -174,52 +172,6 @@ const authMiddleware = async (req, res, next) => {
  */
 app.get("/health", (req, res) => {
   res.status(200).json({ status: "healthy" });
-});
-
-/**
- * ROUTE 2: POST /login
- * Public login endpoint to authenticate a student via Cognito.
- * Body: { username, password }
- */
-app.post("/login", async (req, res) => {
-  const { username, password } = req.body;
-
-  if (!username || !password) {
-    return res.status(400).json({ error: "Username and password are required" });
-  }
-
-  const clientId = process.env.USER_POOL_CLIENT_ID;
-  if (!clientId) {
-    return res.status(500).json({ error: "Cognito User Pool Client ID is not configured on the server" });
-  }
-
-  try {
-    const command = new InitiateAuthCommand({
-      AuthFlow: "USER_PASSWORD_AUTH",
-      ClientId: clientId,
-      AuthParameters: {
-        USERNAME: username,
-        PASSWORD: password
-      }
-    });
-
-    const response = await cognitoClient.send(command);
-    
-    // Return authentication tokens to the client
-    return res.status(200).json({
-      access_token: response.AuthenticationResult.AccessToken,
-      id_token: response.AuthenticationResult.IdToken,
-      refresh_token: response.AuthenticationResult.RefreshToken,
-      expires_in: response.AuthenticationResult.ExpiresIn,
-      token_type: response.AuthenticationResult.TokenType
-    });
-  } catch (error) {
-    console.error(`Login attempt failed for ${username}:`, error.message);
-    return res.status(401).json({ 
-      error: "Authentication failed", 
-      message: error.message 
-    });
-  }
 });
 
 /**

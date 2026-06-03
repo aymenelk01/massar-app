@@ -76,41 +76,36 @@ form.addEventListener("submit", async function (event) {
   setLoading(true);
 
   try {
-    const response = await fetch(`${API_BASE_URL}/login`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ username, password })
+    const userPool = new AmazonCognitoIdentity.CognitoUserPool({
+      UserPoolId: "eu-south-1_X8QQOtXmF",
+      ClientId: "4pi2acv9r8a14vnpjbvdf5egjb"
     });
 
-    let data = {};
-    try {
-      data = await response.json();
-    } catch (_) {
-      // Ignore parsing errors
-    }
+    const authDetails = new AmazonCognitoIdentity.AuthenticationDetails({
+      Username: username,
+      Password: password
+    });
 
-    if (response.ok && data.access_token) {
-      // Store the access token in sessionStorage (cleared on tab close)
-      sessionStorage.setItem("access_token", data.access_token);
+    const cognitoUser = new AmazonCognitoIdentity.CognitoUser({
+      Username: username,
+      Pool: userPool
+    });
 
-      if (data.id_token)      sessionStorage.setItem("id_token", data.id_token);
-      if (data.refresh_token) sessionStorage.setItem("refresh_token", data.refresh_token);
+    await new Promise((resolve, reject) => {
+      cognitoUser.authenticateUser(authDetails, {
+        onSuccess: (result) => {
+          sessionStorage.setItem("access_token", result.getAccessToken().getJwtToken());
+          sessionStorage.setItem("id_token", result.getIdToken().getJwtToken());
+          sessionStorage.setItem("refresh_token", result.getRefreshToken().getToken());
+          resolve();
+        },
+        onFailure: (err) => {
+          reject(err);
+        }
+      });
+    });
 
-      // Redirect to the results page
-      window.location.replace("results.html");
-    } else {
-      // Authentication failure
-      const serverMessage = data.message || data.error || "";
-      if (response.status === 401 || response.status === 403) {
-        showError("Invalid Massar Code or password. Please try again.");
-      } else if (serverMessage) {
-        showError(`Authentication failed: ${serverMessage}`);
-      } else {
-        showError("An error occurred during authentication. Please try again later.");
-      }
-    }
+    window.location.replace("results.html");
   } catch (networkError) {
     console.error("Network error during login:", networkError);
     showError("Failed to connect to the server. Please check your internet connection and try again.");
