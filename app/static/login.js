@@ -91,6 +91,8 @@ form.addEventListener("submit", async function (event) {
       Pool: userPool
     });
 
+    cognitoUser.setAuthenticationFlowType('USER_PASSWORD_AUTH');
+
     await new Promise((resolve, reject) => {
       cognitoUser.authenticateUser(authDetails, {
         onSuccess: (result) => {
