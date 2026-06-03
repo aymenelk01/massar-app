@@ -149,12 +149,18 @@ const authMiddleware = async (req, res, next) => {
     return res.status(500).json({ error: "Authentication system is not configured on the server" });
   }
 
+  let token = null;
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    token = authHeader.split(" ")[1];
+  } else if (req.query && req.query.token) {
+    token = req.query.token;
+  }
+
+  if (!token) {
     return res.status(401).json({ error: "Unauthorized: Missing or invalid Authorization header" });
   }
 
-  const token = authHeader.split(" ")[1];
   try {
     const payload = await jwtVerifier.verify(token);
     req.user = payload; // Attach decoded JWT payload to the request

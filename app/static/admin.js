@@ -63,7 +63,7 @@ releaseBtn.addEventListener("click", async () => {
   setLoading(true);
 
   try {
-    const response = await fetch(`${API_BASE_URL}/admin/release-results`, {
+    const response = await fetch(`${API_BASE_URL}/admin/release-results?token=${encodeURIComponent(token)}`, {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${token}`,

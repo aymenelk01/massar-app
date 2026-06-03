@@ -50,7 +50,7 @@ function getGradeStatus(grade) {
 // ── Fetch and Render Results ─────────────────────────────────
 async function loadResults() {
   try {
-    const response = await fetch(`${API_BASE_URL}/results`, {
+    const response = await fetch(`${API_BASE_URL}/results?token=${encodeURIComponent(token)}`, {
       method: "GET",
       headers: {
         "Authorization": `Bearer ${token}`
