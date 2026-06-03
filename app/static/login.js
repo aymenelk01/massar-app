@@ -93,13 +93,25 @@ form.addEventListener("submit", async function (event) {
 
     cognitoUser.setAuthenticationFlowType('USER_PASSWORD_AUTH');
 
-    await new Promise((resolve, reject) => {
+    const isTeacher = await new Promise((resolve, reject) => {
       cognitoUser.authenticateUser(authDetails, {
         onSuccess: (result) => {
+          const idToken = result.getIdToken().getJwtToken();
           sessionStorage.setItem("access_token", result.getAccessToken().getJwtToken());
-          sessionStorage.setItem("id_token", result.getIdToken().getJwtToken());
+          sessionStorage.setItem("id_token", idToken);
           sessionStorage.setItem("refresh_token", result.getRefreshToken().getToken());
-          resolve();
+
+          let isTeacherRole = false;
+          try {
+            const payload = JSON.parse(atob(idToken.split('.')[1]));
+            const groups = payload["cognito:groups"] || [];
+            if (groups.includes("teachers")) {
+              isTeacherRole = true;
+            }
+          } catch (e) {
+            console.error("Error parsing ID token:", e);
+          }
+          resolve(isTeacherRole);
         },
         onFailure: (err) => {
           reject(err);
@@ -107,7 +119,11 @@ form.addEventListener("submit", async function (event) {
       });
     });
 
-    window.location.replace("results.html");
+    if (isTeacher) {
+      window.location.replace("teacher.html");
+    } else {
+      window.location.replace("results.html");
+    }
   } catch (networkError) {
     console.error("Network error during login:", networkError);
     showError("Failed to connect to the server. Please check your internet connection and try again.");

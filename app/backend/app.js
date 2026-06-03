@@ -150,17 +150,12 @@ const authMiddleware = async (req, res, next) => {
     return res.status(500).json({ error: "Authentication system is not configured on the server" });
   }
 
-  let token = null;
   const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    token = authHeader.split(" ")[1];
-  } else if (req.query && req.query.token) {
-    token = req.query.token;
-  }
-
-  if (!token) {
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return res.status(401).json({ error: "Unauthorized: Missing or invalid Authorization header" });
   }
+
+  const token = authHeader.split(" ")[1];
 
   try {
     const payload = await jwtVerifier.verify(token);
@@ -170,6 +165,18 @@ const authMiddleware = async (req, res, next) => {
     console.error("JWT Verification failed:", error.message);
     return res.status(401).json({ error: "Unauthorized: Invalid or expired token" });
   }
+};
+
+/**
+ * Authentication Middleware for verifying that the user belongs to the "teachers" group.
+ * Assumes authMiddleware has already run and set req.user.
+ */
+const teacherMiddleware = (req, res, next) => {
+  const groups = req.user["cognito:groups"] || [];
+  if (!groups.includes("teachers")) {
+    return res.status(403).json({ error: "Forbidden: Access restricted to teachers only" });
+  }
+  next();
 };
 
 /**
@@ -262,6 +269,152 @@ app.get("/results", authMiddleware, async (req, res) => {
   } catch (error) {
     console.error(`Error retrieving results for student ${code_massar}:`, error.message);
     return res.status(500).json({ error: "Failed to fetch student results from database" });
+  }
+});
+
+/**
+ * ROUTE 5: GET /teacher/students
+ * Protected route for teachers to list all students and their grades.
+ */
+app.get("/teacher/students", authMiddleware, teacherMiddleware, async (req, res) => {
+  try {
+    const db = await getDbPool();
+    const [rows] = await db.query(`
+      SELECT 
+        s.id, 
+        s.code_massar, 
+        s.full_name, 
+        s.email, 
+        s.phone, 
+        s.result,
+        sr.subject_name,
+        sr.grade
+      FROM students s
+      LEFT JOIN subject_results sr ON s.id = sr.student_id
+    `);
+
+    const studentMap = {};
+    rows.forEach(row => {
+      if (!studentMap[row.id]) {
+        studentMap[row.id] = {
+          id: row.id,
+          code_massar: row.code_massar,
+          full_name: row.full_name,
+          email: row.email,
+          phone: row.phone,
+          result: row.result,
+          subject_results: []
+        };
+      }
+      if (row.subject_name) {
+        studentMap[row.id].subject_results.push({
+          subject_name: row.subject_name,
+          grade: parseFloat(row.grade)
+        });
+      }
+    });
+
+    return res.status(200).json(Object.values(studentMap));
+  } catch (error) {
+    console.error("Error retrieving student list for teacher:", error.message);
+    return res.status(500).json({ error: "Failed to fetch student list from database" });
+  }
+});
+
+/**
+ * ROUTE 6: POST /teacher/grades
+ * Protected route for teachers to input/edit student grades.
+ * Body: { code_massar, subject_name, grade }
+ */
+app.post("/teacher/grades", authMiddleware, teacherMiddleware, async (req, res) => {
+  const { code_massar, subject_name, grade } = req.body;
+
+  if (!code_massar || !subject_name || typeof grade === "undefined") {
+    return res.status(400).json({ error: "Missing required parameters: code_massar, subject_name, and grade are required" });
+  }
+
+  const parsedGrade = parseFloat(grade);
+  if (isNaN(parsedGrade) || parsedGrade < 0 || parsedGrade > 20) {
+    return res.status(400).json({ error: "Grade must be a valid number between 0 and 20" });
+  }
+
+  const normalizedCode = code_massar.trim().toUpperCase();
+
+  try {
+    const db = await getDbPool();
+
+    // 1. Get student ID
+    const [students] = await db.query(
+      "SELECT id FROM students WHERE code_massar = ?",
+      [normalizedCode]
+    );
+
+    if (students.length === 0) {
+      return res.status(404).json({ error: `Student with code ${normalizedCode} not found` });
+    }
+
+    const studentId = students[0].id;
+
+    // 2. Check if grade exists
+    const [grades] = await db.query(
+      "SELECT id FROM subject_results WHERE student_id = ? AND subject_name = ?",
+      [studentId, subject_name]
+    );
+
+    if (grades.length > 0) {
+      // Update
+      await db.query(
+        "UPDATE subject_results SET grade = ? WHERE student_id = ? AND subject_name = ?",
+        [parsedGrade, studentId, subject_name]
+      );
+    } else {
+      // Insert
+      await db.query(
+        "INSERT INTO subject_results (student_id, subject_name, grade) VALUES (?, ?, ?)",
+        [studentId, subject_name, parsedGrade]
+      );
+    }
+
+    // 3. Recalculate average and update student status (Admis vs Ajourné)
+    const [allGrades] = await db.query(
+      "SELECT grade FROM subject_results WHERE student_id = ?",
+      [studentId]
+    );
+
+    let total = 0;
+    allGrades.forEach(row => {
+      total += parseFloat(row.grade);
+    });
+    const average = allGrades.length > 0 ? (total / allGrades.length) : 0;
+    const finalResult = average >= 10.0 ? "Admis" : "Ajourné";
+
+    await db.query(
+      "UPDATE students SET result = ? WHERE id = ?",
+      [finalResult, studentId]
+    );
+
+    // 4. Invalidate/Delete Redis Cache key for the student
+    const cacheKey = `results:${normalizedCode}`;
+    if (redis && redis.status === "ready") {
+      try {
+        await redis.del(cacheKey);
+        console.log(`Cache invalidated for key: ${cacheKey}`);
+      } catch (err) {
+        console.warn(`Failed to delete Redis cache key ${cacheKey}:`, err.message);
+      }
+    }
+
+    return res.status(200).json({
+      message: "Grade successfully updated",
+      student_code: normalizedCode,
+      subject: subject_name,
+      grade: parsedGrade,
+      new_average: parseFloat(average.toFixed(2)),
+      new_result: finalResult
+    });
+  } catch (error) {
+    console.error(`Error updating grade for student ${normalizedCode}:`, error.message);
+    return res.status(500).json({ error: "Failed to update grade in database" });
   }
 });
 
