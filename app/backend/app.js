@@ -223,7 +223,7 @@ app.post("/login", async (req, res) => {
 });
 
 /**
- * ROUTE 3: GET /results
+ * ROUTE 3: GET /resultss
  * Protected route to get the authenticated student's results.
  * Pulls code_massar from JWT claims, checks Redis first, then falls back to Aurora MySQL.
  */
