@@ -96,7 +96,6 @@ jobs:
     env:
       AWS_REGION: eu-south-1
       S3_BUCKET_NAME: dev-app-massar-static
-      CLOUDFRONT_DISTRIBUTION_ID: E3QZLZ8Q8G2C7J
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
