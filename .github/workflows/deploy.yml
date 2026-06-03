@@ -11,31 +11,46 @@ permissions:
   id-token: write
 
 jobs:
-  deploy:
+  check-changes:
     runs-on: ubuntu-latest
-    env:
-      AWS_REGION: eu-south-1
-      ECS_CLUSTER: dev-cluster
-      ECS_SERVICE: dev-service
-      S3_BUCKET_NAME: dev-app-massar-static
+    outputs:
+      app: ${{ steps.filter.outputs.app }}
+      static: ${{ steps.filter.outputs.static }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Check for static file changes
+      - name: Check for file changes
         id: filter
         uses: dorny/paths-filter@v3
         with:
           filters: |
             static:
-              - 'app/static/**'  
+              - 'app/static/**'
+            app:
+              - 'app/**'
+              - '!app/static/**'
+
+  deploy-app:
+    needs: check-changes
+    if: needs.check-changes.outputs.app == 'true'
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: eu-south-1
+      ECS_CLUSTER: dev-cluster
+      ECS_SERVICE: dev-service
+      ECS_TASK_FAMILY: dev-task-family
+      CONTAINER_NAME: dev-app-container
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-          role-session-name: github-actions-deploy
+          role-session-name: github-actions-deploy-app
 
       - name: Login to Amazon ECR
         id: login-ecr
@@ -49,23 +64,49 @@ jobs:
 
       - name: Push the Docker image
         run: |
-          docker push $IMAGE_URI:${{ github.sha }} 
-          docker push $IMAGE_URI:latest
-      
-      - name: Update ECS service
+              docker push $IMAGE_URI:${{ github.sha }} 
+              docker push $IMAGE_URI:latest
+          
+      - name: Download active task definition
         run: |
-          aws ecs update-service \
-            --cluster $ECS_CLUSTER \
-            --service $ECS_SERVICE \
-            --force-new-deployment    
-      
-      - name: Wait for deployment to complete
-        run: |
-          aws ecs wait services-stable \
-            --cluster $ECS_CLUSTER \
-            --services $ECS_SERVICE      
+              aws ecs describe-task-definition \
+                --task-definition ${{ env.ECS_TASK_FAMILY }} \
+                --query taskDefinition > task-definition.json
+          
+      - name: Render Amazon ECS task definition
+        id: render-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+              task-definition: task-definition.json
+              container-name: ${{ env.CONTAINER_NAME }}
+              image: ${{ env.IMAGE_URI }}:${{ github.sha }}
 
-      - name: upload static files to S3
-        if: steps.filter.outputs.static == 'true'
+      - name: Deploy Amazon ECS task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+  deploy-static:
+    needs: check-changes
+    if: needs.check-changes.outputs.static == 'true'
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: eu-south-1
+      S3_BUCKET_NAME: dev-app-massar-static
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: github-actions-deploy-static
+
+      - name: Upload static files to S3
         run: |
-          aws s3 sync ./app/static s3://$S3_BUCKET_NAME/static --delete     
+          aws s3 sync ./app/static s3://$S3_BUCKET_NAME/static --delete
