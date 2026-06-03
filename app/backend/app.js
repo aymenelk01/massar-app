@@ -132,7 +132,8 @@ async function getDbPool() {
       database: dbName,
       connectionLimit: 10, // Maximum pool size (limit 10)
       waitForConnections: true,
-      queueLimit: 0
+      queueLimit: 0,
+      ssl: "Amazon RDS"
     });
     return dbPool;
   } catch (error) {
