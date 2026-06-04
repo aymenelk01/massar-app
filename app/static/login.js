@@ -56,7 +56,9 @@ function hideError() {
 function setLoading(loading) {
   submitBtn.disabled = loading;
   btnLabel.textContent = loading ? "Authenticating..." : "Log In";
-  btnSpinner.hidden = !loading;
+  if (btnSpinner) {
+    btnSpinner.hidden = !loading;
+  }
 }
 
 // ── Form Submit Handler ───────────────────────────────────────
