@@ -180,6 +180,18 @@ const teacherMiddleware = (req, res, next) => {
 };
 
 /**
+ * Authentication Middleware for verifying that the user belongs to the "admins" group.
+ * Assumes authMiddleware has already run and set req.user.
+ */
+const adminMiddleware = (req, res, next) => {
+  const groups = req.user["cognito:groups"] || [];
+  if (!groups.includes("admins")) {
+    return res.status(403).json({ error: "Forbidden: Access restricted to administrators only" });
+  }
+  next();
+};
+
+/**
  * ROUTE 1: GET /health
  * Public health check endpoint utilized by Application Load Balancers.
  * Does not block startup or crash even if DB/Redis is down.
@@ -423,7 +435,7 @@ app.post("/teacher/grades", authMiddleware, teacherMiddleware, async (req, res) 
  * Protected route for administrator to trigger SQS notification releases.
  * Queries all students from DB, and sends messages to SQS queue.
  */
-app.post("/admin/release-results", authMiddleware, async (req, res) => {
+app.post("/admin/release-results", authMiddleware, adminMiddleware, async (req, res) => {
   const queueUrl = process.env.SQS_QUEUE_URL;
   if (!queueUrl) {
     return res.status(500).json({ error: "SQS Queue URL environment variable not configured" });
@@ -471,6 +483,216 @@ app.post("/admin/release-results", authMiddleware, async (req, res) => {
   } catch (error) {
     console.error("Failed to release results:", error.message);
     return res.status(500).json({ error: "Failed to process results release" });
+  }
+});
+
+/**
+ * ROUTE 7: GET /admin/students
+ * Protected route for admins to list all students.
+ */
+app.get("/admin/students", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const db = await getDbPool();
+    const [rows] = await db.query(
+      "SELECT id, code_massar, full_name, email, phone, result FROM students ORDER BY id DESC"
+    );
+    return res.status(200).json(rows);
+  } catch (error) {
+    console.error("Error retrieving student list for admin:", error.message);
+    return res.status(500).json({ error: "Failed to fetch student list from database" });
+  }
+});
+
+/**
+ * ROUTE 8: POST /admin/students
+ * Protected route for admins to create a student.
+ * Body: { full_name, email, phone }
+ */
+app.post("/admin/students", authMiddleware, adminMiddleware, async (req, res) => {
+  const { full_name, email, phone } = req.body;
+  if (!full_name || !email || !phone) {
+    return res.status(400).json({ error: "Missing required parameters: full_name, email, and phone are required" });
+  }
+
+  const cleanName = full_name.trim();
+  const cleanEmail = email.trim();
+  const cleanPhone = phone.trim();
+
+  const maxAttempts = 3;
+  let attempts = 0;
+  let success = false;
+  let code_massar = null;
+
+  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+  try {
+    const db = await getDbPool();
+
+    while (attempts < maxAttempts && !success) {
+      attempts++;
+      // Generate Massar code: 1 letter + 9 digits
+      const randomLetter = letters[Math.floor(Math.random() * letters.length)];
+      let digits = "";
+      for (let i = 0; i < 9; i++) {
+        digits += Math.floor(Math.random() * 10);
+      }
+      code_massar = `${randomLetter}${digits}`;
+
+      try {
+        await db.query(
+          "INSERT INTO students (code_massar, full_name, email, phone, result) VALUES (?, ?, ?, ?, 'Ajourné')",
+          [code_massar, cleanName, cleanEmail, cleanPhone]
+        );
+        success = true;
+      } catch (error) {
+        if (error.errno === 1062 || error.code === "ER_DUP_ENTRY") {
+          console.warn(`Massar code collision for code ${code_massar}. Attempt ${attempts}/${maxAttempts}. Retrying...`);
+          if (attempts >= maxAttempts) {
+            console.error("Max database insertion attempts reached due to Massar code collisions.");
+            return res.status(500).json({ error: "Failed to generate a unique Massar code after multiple attempts. Please try again." });
+          }
+        } else {
+          // Any other error is thrown immediately
+          throw error;
+        }
+      }
+    }
+
+    return res.status(201).json({
+      message: "Student successfully created",
+      student: {
+        code_massar,
+        full_name: cleanName,
+        email: cleanEmail,
+        phone: cleanPhone,
+        result: "Ajourné"
+      }
+    });
+  } catch (error) {
+    console.error("Database error during student creation:", error.message);
+    return res.status(500).json({ error: "Failed to insert student into database" });
+  }
+});
+
+/**
+ * ROUTE 9: PUT /admin/students/:id
+ * Protected route for admins to modify student profile.
+ * Body: { full_name, email, phone }
+ */
+app.put("/admin/students/:id", authMiddleware, adminMiddleware, async (req, res) => {
+  const studentId = parseInt(req.params.id, 10);
+  const { full_name, email, phone } = req.body;
+
+  if (isNaN(studentId)) {
+    return res.status(400).json({ error: "Invalid student ID parameter" });
+  }
+  if (!full_name || !email || !phone) {
+    return res.status(400).json({ error: "Missing required parameters: full_name, email, and phone are required" });
+  }
+
+  const cleanName = full_name.trim();
+  const cleanEmail = email.trim();
+  const cleanPhone = phone.trim();
+
+  try {
+    const db = await getDbPool();
+
+    // Check if student exists & get massar code for cache invalidation
+    const [students] = await db.query(
+      "SELECT code_massar FROM students WHERE id = ?",
+      [studentId]
+    );
+
+    if (students.length === 0) {
+      return res.status(404).json({ error: `Student with ID ${studentId} not found` });
+    }
+
+    const code_massar = students[0].code_massar;
+
+    // Update student details
+    await db.query(
+      "UPDATE students SET full_name = ?, email = ?, phone = ? WHERE id = ?",
+      [cleanName, cleanEmail, cleanPhone, studentId]
+    );
+
+    // Invalidate/Delete Redis Cache key for the student
+    const cacheKey = `results:${code_massar}`;
+    if (redis && redis.status === "ready") {
+      try {
+        await redis.del(cacheKey);
+        console.log(`Cache invalidated for key: ${cacheKey}`);
+      } catch (err) {
+        console.warn(`Failed to delete Redis cache key ${cacheKey}:`, err.message);
+      }
+    }
+
+    return res.status(200).json({
+      message: "Student profile updated successfully",
+      student: {
+        id: studentId,
+        code_massar,
+        full_name: cleanName,
+        email: cleanEmail,
+        phone: cleanPhone
+      }
+    });
+  } catch (error) {
+    console.error(`Error updating student profile ID ${studentId}:`, error.message);
+    return res.status(500).json({ error: "Failed to update student in database" });
+  }
+});
+
+/**
+ * ROUTE 10: DELETE /admin/students/:id
+ * Protected route for admins to delete student record.
+ */
+app.delete("/admin/students/:id", authMiddleware, adminMiddleware, async (req, res) => {
+  const studentId = parseInt(req.params.id, 10);
+
+  if (isNaN(studentId)) {
+    return res.status(400).json({ error: "Invalid student ID parameter" });
+  }
+
+  try {
+    const db = await getDbPool();
+
+    // Get student Massar code first for cache invalidation
+    const [students] = await db.query(
+      "SELECT code_massar FROM students WHERE id = ?",
+      [studentId]
+    );
+
+    if (students.length === 0) {
+      return res.status(404).json({ error: `Student with ID ${studentId} not found` });
+    }
+
+    const code_massar = students[0].code_massar;
+
+    // Delete student (cascades automatically to subject_results table)
+    await db.query(
+      "DELETE FROM students WHERE id = ?",
+      [studentId]
+    );
+
+    // Invalidate/Delete Redis Cache key for the student
+    const cacheKey = `results:${code_massar}`;
+    if (redis && redis.status === "ready") {
+      try {
+        await redis.del(cacheKey);
+        console.log(`Cache invalidated for key: ${cacheKey}`);
+      } catch (err) {
+        console.warn(`Failed to delete Redis cache key ${cacheKey}:`, err.message);
+      }
+    }
+
+    return res.status(200).json({
+      message: "Student deleted successfully",
+      student_id: studentId,
+      code_massar
+    });
+  } catch (error) {
+    console.error(`Error deleting student ID ${studentId}:`, error.message);
+    return res.status(500).json({ error: "Failed to delete student from database" });
   }
 });
 
