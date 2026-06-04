@@ -131,7 +131,7 @@ form.addEventListener("submit", async function (event) {
     window.location.replace(targetRoute);
   } catch (networkError) {
     console.error("Network error during login:", networkError);
-    showError("Failed to connect to the server. Please check your internet connection and try again.");
+    showError("Your Massar Code or password is incorrect. Please try again.");
   } finally {
     setLoading(false);
   }
