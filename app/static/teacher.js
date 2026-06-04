@@ -45,18 +45,29 @@ let currentStudent = null;
 const accessToken = sessionStorage.getItem("access_token");
 const idToken = sessionStorage.getItem("id_token");
 
+function decodeJwt(token) {
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = base64.length % 4;
+    const padded = pad ? base64 + '='.repeat(4 - pad) : base64;
+    return JSON.parse(atob(padded));
+  } catch (e) {
+    return null;
+  }
+}
+
 if (!accessToken || !idToken) {
   handleSessionExpiry();
 } else {
-  try {
-    const payload = JSON.parse(atob(idToken.split('.')[1]));
+  const payload = decodeJwt(idToken);
+  if (!payload) {
+    handleSessionExpiry();
+  } else {
     const groups = payload["cognito:groups"] || [];
     if (!groups.includes("teachers")) {
       handleSessionExpiry();
     }
-  } catch (err) {
-    console.error("Token validation failed:", err);
-    handleSessionExpiry();
   }
 }
 

@@ -7,19 +7,29 @@
   <title>Massar Portal — Ministry of National Education</title>
   <link rel="stylesheet" href="styles.css" />
   <script>
-    // If already logged in, redirect them to the correct dashboard based on group
+    function decodeJwt(token) {
+      try {
+        const base64Url = token.split('.')[1];
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        const pad = base64.length % 4;
+        const padded = pad ? base64 + '='.repeat(4 - pad) : base64;
+        return JSON.parse(atob(padded));
+      } catch (e) {
+        return null;
+      }
+    }
     const idToken = sessionStorage.getItem("id_token");
     const accessToken = sessionStorage.getItem("access_token");
     if (accessToken && idToken) {
-      try {
-        const payload = JSON.parse(atob(idToken.split('.')[1]));
+      const payload = decodeJwt(idToken);
+      if (payload) {
         const groups = payload["cognito:groups"] || [];
         if (groups.includes("teachers")) {
           window.location.replace("teacher.html");
         } else {
           window.location.replace("results.html");
         }
-      } catch (e) {
+      } else {
         sessionStorage.clear();
       }
     }

@@ -103,7 +103,12 @@ form.addEventListener("submit", async function (event) {
 
           let isTeacherRole = false;
           try {
-            const payload = JSON.parse(atob(idToken.split('.')[1]));
+            const base64Url = idToken.split('.')[1];
+            const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+            const pad = base64.length % 4;
+            const padded = pad ? base64 + '='.repeat(4 - pad) : base64;
+            const payload = JSON.parse(atob(padded));
+            
             const groups = payload["cognito:groups"] || [];
             if (groups.includes("teachers")) {
               isTeacherRole = true;
