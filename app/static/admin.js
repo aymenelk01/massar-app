@@ -4,7 +4,7 @@
    ============================================================ */
 
 // API base URL — replace with your actual CloudFront 
-const API_BASE_URL = "https://d7w3mygjx3srq.cloudfront.net";
+const API_BASE_URL = "https://dwda7s6cknawh.cloudfront.net";
 
 // DOM references
 const releaseBtn   = document.getElementById("release-btn");
