@@ -217,12 +217,12 @@ function openEditModal(student) {
     }
   });
 
-  editModalBackdrop.hidden = false;
+  editModalBackdrop.style.display = "flex";
   gradeMath.focus();
 }
 
 function closeModal() {
-  editModalBackdrop.hidden = true;
+  editModalBackdrop.style.display = "none";
   currentStudent = null;
 }
 
