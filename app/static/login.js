@@ -93,7 +93,7 @@ form.addEventListener("submit", async function (event) {
 
     cognitoUser.setAuthenticationFlowType('USER_PASSWORD_AUTH');
 
-    const isTeacher = await new Promise((resolve, reject) => {
+    const targetRoute = await new Promise((resolve, reject) => {
       cognitoUser.authenticateUser(authDetails, {
         onSuccess: (result) => {
           const idToken = result.getIdToken().getJwtToken();
@@ -101,7 +101,7 @@ form.addEventListener("submit", async function (event) {
           sessionStorage.setItem("id_token", idToken);
           sessionStorage.setItem("refresh_token", result.getRefreshToken().getToken());
 
-          let isTeacherRole = false;
+          let route = "results.html";
           try {
             const base64Url = idToken.split('.')[1];
             const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
@@ -110,13 +110,15 @@ form.addEventListener("submit", async function (event) {
             const payload = JSON.parse(atob(padded));
             
             const groups = payload["cognito:groups"] || [];
-            if (groups.includes("teachers")) {
-              isTeacherRole = true;
+            if (groups.includes("admins")) {
+              route = "admin.html";
+            } else if (groups.includes("teachers")) {
+              route = "teacher.html";
             }
           } catch (e) {
             console.error("Error parsing ID token:", e);
           }
-          resolve(isTeacherRole);
+          resolve(route);
         },
         onFailure: (err) => {
           reject(err);
@@ -124,11 +126,7 @@ form.addEventListener("submit", async function (event) {
       });
     });
 
-    if (isTeacher) {
-      window.location.replace("teacher.html");
-    } else {
-      window.location.replace("results.html");
-    }
+    window.location.replace(targetRoute);
   } catch (networkError) {
     console.error("Network error during login:", networkError);
     showError("Failed to connect to the server. Please check your internet connection and try again.");

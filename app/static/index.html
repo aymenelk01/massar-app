@@ -24,7 +24,9 @@
       const payload = decodeJwt(idToken);
       if (payload) {
         const groups = payload["cognito:groups"] || [];
-        if (groups.includes("teachers")) {
+        if (groups.includes("admins")) {
+          window.location.replace("admin.html");
+        } else if (groups.includes("teachers")) {
           window.location.replace("teacher.html");
         } else {
           window.location.replace("results.html");
