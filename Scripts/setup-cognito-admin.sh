@@ -7,7 +7,8 @@ export AWS_PAGER=""
 USER_POOL_ID="eu-south-1_3QYn6cnDA"
 REGION="eu-south-1"
 GROUP_NAME="admins"
-USERNAME="admin1"
+echo "enter a username"
+read -r USERNAME
 
 echo "Enter password for user ${USERNAME}:"
 read -s PASSWORD
