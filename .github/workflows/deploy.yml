@@ -120,6 +120,6 @@ jobs:
 
       - name: Upload static files to S3
         run: |
-          aws s3 sync ./app/static s3://$S3_BUCKET_NAME/static/dist --delete --cache-control "no-cache"
+          aws s3 sync ./app/static/dist s3://$S3_BUCKET_NAME/static --delete --cache-control "no-cache"
           
       
