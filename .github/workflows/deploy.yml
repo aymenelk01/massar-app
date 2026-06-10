@@ -107,8 +107,19 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: github-actions-deploy-static
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+         node-version: '20'
+
+       - name: Install dependencies and build static files
+         working-directory: ./app/static
+         run : |
+           npm ci
+           npm run build
+
       - name: Upload static files to S3
         run: |
-          aws s3 sync ./app/static s3://$S3_BUCKET_NAME/static --delete --cache-control "no-cache"
+          aws s3 sync ./app/static s3://$S3_BUCKET_NAME/static/dist --delete --cache-control "no-cache"
           
       
