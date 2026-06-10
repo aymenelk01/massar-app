@@ -62,6 +62,7 @@ if (process.env.ELASTICACHE_ENDPOINT) {
   redis = new Redis({
     host: redisHost,
     port: redisPort,
+    tls: {}, // Enable TLS for in-transit encryption — required since ElastiCache transit_encryption_enabled = true
     lazyConnect: true,          // Prevents startup crashes if Redis is temporarily unreachable
     maxRetriesPerRequest: 1,    // Fails commands fast so we can fall back to database immediately
     retryStrategy(times) {
@@ -205,7 +206,7 @@ app.get("/health", (req, res) => {
  * Protected route to get the authenticated student's results.
  * Pulls code_massar from JWT claims, checks Redis first, then falls back to Aurora MySQL.
  */
-app.get("/results", authMiddleware, async (req, res) => {
+app.get("/api/results", authMiddleware, async (req, res) => {
   // Extract user identifier from claims (expects email or username: e.g. K130029841@taalim.ma or K130029841)
   const cognitoUser = req.user.username || req.user["cognito:username"] || req.user.email || "";
   const code_massar = cognitoUser.split("@")[0].toUpperCase();
@@ -288,7 +289,7 @@ app.get("/results", authMiddleware, async (req, res) => {
  * ROUTE 5: GET /teacher/students
  * Protected route for teachers to list all students and their grades.
  */
-app.get("/teacher/students", authMiddleware, teacherMiddleware, async (req, res) => {
+app.get("/api/teacher/students", authMiddleware, teacherMiddleware, async (req, res) => {
   try {
     const db = await getDbPool();
     const [rows] = await db.query(`
@@ -338,7 +339,7 @@ app.get("/teacher/students", authMiddleware, teacherMiddleware, async (req, res)
  * Protected route for teachers to input/edit student grades.
  * Body: { code_massar, subject_name, grade }
  */
-app.post("/teacher/grades", authMiddleware, teacherMiddleware, async (req, res) => {
+app.post("/api/teacher/grades", authMiddleware, teacherMiddleware, async (req, res) => {
   const { code_massar, subject_name, grade } = req.body;
 
   if (!code_massar || !subject_name || typeof grade === "undefined") {
@@ -435,7 +436,7 @@ app.post("/teacher/grades", authMiddleware, teacherMiddleware, async (req, res) 
  * Protected route for administrator to trigger SQS notification releases.
  * Queries all students from DB, and sends messages to SQS queue.
  */
-app.post("/admin/release-results", authMiddleware, adminMiddleware, async (req, res) => {
+app.post("/api/admin/release-results", authMiddleware, adminMiddleware, async (req, res) => {
   const queueUrl = process.env.SQS_QUEUE_URL;
   if (!queueUrl) {
     return res.status(500).json({ error: "SQS Queue URL environment variable not configured" });
@@ -444,24 +445,55 @@ app.post("/admin/release-results", authMiddleware, adminMiddleware, async (req, 
   try {
     const db = await getDbPool();
 
-    // Query all students
-    const [students] = await db.query(
-      "SELECT full_name, email, phone, result FROM students"
-    );
+    // Query all students and their subject grades
+    const [rows] = await db.query(`
+      SELECT 
+        s.id, 
+        s.full_name, 
+        s.email, 
+        s.phone, 
+        s.result,
+        sr.subject_name,
+        sr.grade
+      FROM students s
+      LEFT JOIN subject_results sr ON s.id = sr.student_id
+    `);
 
-    if (students.length === 0) {
+    if (rows.length === 0) {
       return res.status(200).json({ message: "No student records found to release", count: 0 });
     }
 
-    console.log(`Found ${students.length} students. Sending notification payloads to SQS...`);
+    // Group rows by student id to build array of subjects per student
+    const studentMap = {};
+    rows.forEach(row => {
+      if (!studentMap[row.id]) {
+        studentMap[row.id] = {
+          full_name: row.full_name,
+          email: row.email,
+          phone: row.phone,
+          result: row.result,
+          subjects: []
+        };
+      }
+      if (row.subject_name) {
+        studentMap[row.id].subjects.push({
+          subject_name: row.subject_name,
+          grade: parseFloat(row.grade)
+        });
+      }
+    });
+
+    const studentsList = Object.values(studentMap);
+    console.log(`Found ${studentsList.length} students. Sending notification payloads to SQS...`);
 
     // Prepare SQS SendMessage Promises to process in parallel
-    const sendPromises = students.map(student => {
+    const sendPromises = studentsList.map(student => {
       const messageBody = JSON.stringify({
         email: student.email,
         phone: student.phone,
         result: student.result,
-        full_name: student.full_name
+        full_name: student.full_name,
+        subjects: student.subjects
       });
 
       const command = new SendMessageCommand({
@@ -474,11 +506,11 @@ app.post("/admin/release-results", authMiddleware, adminMiddleware, async (req, 
 
     // Wait for all messages to be queued
     await Promise.all(sendPromises);
-    console.log(`Successfully queued ${students.length} notification messages in SQS.`);
+    console.log(`Successfully queued ${studentsList.length} notification messages in SQS.`);
 
     return res.status(200).json({ 
       message: "Results released", 
-      count: students.length 
+      count: studentsList.length 
     });
   } catch (error) {
     console.error("Failed to release results:", error.message);
@@ -490,7 +522,7 @@ app.post("/admin/release-results", authMiddleware, adminMiddleware, async (req, 
  * ROUTE 7: GET /admin/students
  * Protected route for admins to list all students.
  */
-app.get("/admin/students", authMiddleware, adminMiddleware, async (req, res) => {
+app.get("/api/admin/students", authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const db = await getDbPool();
     const [rows] = await db.query(
@@ -508,7 +540,7 @@ app.get("/admin/students", authMiddleware, adminMiddleware, async (req, res) => 
  * Protected route for admins to create a student.
  * Body: { full_name, email, phone }
  */
-app.post("/admin/students", authMiddleware, adminMiddleware, async (req, res) => {
+app.post("/api/admin/students", authMiddleware, adminMiddleware, async (req, res) => {
   const { full_name, email, phone } = req.body;
   if (!full_name || !email || !phone) {
     return res.status(400).json({ error: "Missing required parameters: full_name, email, and phone are required" });
@@ -579,7 +611,7 @@ app.post("/admin/students", authMiddleware, adminMiddleware, async (req, res) =>
  * Protected route for admins to modify student profile.
  * Body: { full_name, email, phone }
  */
-app.put("/admin/students/:id", authMiddleware, adminMiddleware, async (req, res) => {
+app.put("/api/admin/students/:id", authMiddleware, adminMiddleware, async (req, res) => {
   const studentId = parseInt(req.params.id, 10);
   const { full_name, email, phone } = req.body;
 
@@ -646,7 +678,7 @@ app.put("/admin/students/:id", authMiddleware, adminMiddleware, async (req, res)
  * ROUTE 10: DELETE /admin/students/:id
  * Protected route for admins to delete student record.
  */
-app.delete("/admin/students/:id", authMiddleware, adminMiddleware, async (req, res) => {
+app.delete("/api/admin/students/:id", authMiddleware, adminMiddleware, async (req, res) => {
   const studentId = parseInt(req.params.id, 10);
 
   if (isNaN(studentId)) {

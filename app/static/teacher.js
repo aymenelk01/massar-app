@@ -5,7 +5,7 @@
    ============================================================ */
 
 // API base URL
-const API_BASE_URL = "https://dwda7s6cknawh.cloudfront.net";
+const API_BASE_URL = "/api";
 
 // DOM references
 const loadingState      = document.getElementById("loading-state");
