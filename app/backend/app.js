@@ -281,7 +281,7 @@ app.get("/api/results", authMiddleware, async (req, res) => {
     return res.status(200).json(payload);
   } catch (error) {
     console.error(`Error retrieving results for student ${code_massar}:`, error.message);
-    return res.status(500).json({ error: "Failed to fetch student results from database" });
+    return res.status(500).json({ error: "Failed to fetch student results from database or they are no students available" });
   }
 });
 
