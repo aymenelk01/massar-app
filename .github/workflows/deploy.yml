@@ -112,11 +112,11 @@ jobs:
         with:
          node-version: '20'
 
-       - name: Install dependencies and build static files
-         working-directory: ./app/static
-         run : |
-           npm ci
-           npm run build
+      - name: Install dependencies and build static files
+        working-directory: ./app/static
+        run: |
+          npm ci
+          npm run build
 
       - name: Upload static files to S3
         run: |
