@@ -10,7 +10,8 @@
   "devDependencies": {
     "vite": "^8.0.16"
   },
-  "dependencies": {
+  "optionalDependencies": {
+    "@rolldown/binding-linux-x64-gnu": "^1.1.0",
     "@rolldown/binding-win32-x64-msvc": "^1.1.0"
   }
 }
