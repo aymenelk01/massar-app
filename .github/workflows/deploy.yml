@@ -18,11 +18,11 @@ jobs:
       static: ${{ steps.filter.outputs.static }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Check for file changes
         id: filter
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           filters: |
             static:
@@ -43,7 +43,7 @@ jobs:
       CONTAINER_NAME: massar-app
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -99,7 +99,7 @@ jobs:
       ENVIRONMENT: dev
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -114,9 +114,10 @@ jobs:
           echo "VITE_COGNITO_CLIENT_ID=$(aws ssm get-parameter --name '/massar/${{ env.ENVIRONMENT }}/cognito_client_id' --query 'Parameter.Value' --output text)" >> $GITHUB_ENV    
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-         node-version: '20'
+         node-version: '24'
+         cache: 'npm' # Cache npm dependencies to speed up subsequent builds
 
       - name: Install dependencies and build static files
         working-directory: ./app/static
