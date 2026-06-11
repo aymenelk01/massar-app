@@ -1,4 +1,4 @@
-FROM node:18
+FROM node:24
 
 # Set node environment to production
 ENV NODE_ENV=production
