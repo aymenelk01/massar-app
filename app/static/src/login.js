@@ -79,8 +79,8 @@ form.addEventListener("submit", async function (event) {
 
   try {
     const userPool = new AmazonCognitoIdentity.CognitoUserPool({
-      UserPoolId: "eu-south-1_bWMNQmJaV", // Replace with your User Pool ID
-      ClientId: "4hkmkbiqsbcsftkb1vl156hgj9" // Replace with your App Client ID
+      UserPoolId: import.meta.env.VITE_COGNITO_USER_POOL_ID, 
+      ClientId: import.meta.env.VITE_COGNITO_CLIENT_ID
     });
 
     const authDetails = new AmazonCognitoIdentity.AuthenticationDetails({
