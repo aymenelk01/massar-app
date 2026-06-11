@@ -96,6 +96,7 @@ jobs:
     env:
       AWS_REGION: eu-south-1
       S3_BUCKET_NAME: dev-app-massar-static
+      ENVIRONMENT: dev
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -106,6 +107,11 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: github-actions-deploy-static
+
+      - name: export the cognito environment variables from ssm 
+        run: |
+          echo "VITE_COGNITO_USER_POOL_ID=$(aws ssm get-parameter --name '/massar/${{ env.ENVIRONMENT }}/cognito_user_pool_id' --query 'Parameter.Value' --output text)" >> $GITHUB_ENV
+          echo "VITE_COGNITO_CLIENT_ID=$(aws ssm get-parameter --name '/massar/${{ env.ENVIRONMENT }}/cognito_client_id' --query 'Parameter.Value' --output text)" >> $GITHUB_ENV    
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -120,6 +126,5 @@ jobs:
 
       - name: Upload static files to S3
         run: |
-          aws s3 sync ./app/static/dist s3://$S3_BUCKET_NAME/static --delete --cache-control "no-cache"
-          
+          aws s3 sync ./app/static/dist s3://$S3_BUCKET_NAME/static --delete 
       
