@@ -5,7 +5,6 @@ yarn-debug.log*
 yarn-error.log*
 
 # Package lock files
-package-lock.json
 yarn.lock
 
 # Environment variables
