@@ -127,5 +127,14 @@ jobs:
 
       - name: Upload static files to S3
         run: |
-          aws s3 sync ./app/static/dist s3://$S3_BUCKET_NAME/static --delete 
-      
+          # 1. Upload all hashed assets by vite (JS, CSS) with 1-year cache
+          aws s3 sync ./app/static/dist s3://$S3_BUCKET_NAME/static --delete \
+            --exclude "*.html" \
+            --cache-control "max-age=31536000, public, immutable" 
+
+          # 2. Upload HTML files with no-cache to ensure they are always fresh
+          aws s3 sync ./app/static/dist s3://$S3_BUCKET_NAME/static \
+            --exclude "*" \
+            --include "*.html" \
+            --cache-control "no-cache, no-store, must-revalidate" 
+            
