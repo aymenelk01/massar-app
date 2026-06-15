@@ -5,6 +5,9 @@ on:
       - main
     paths:
       - 'app/**'    
+  repository_dispatch:
+    types:
+      - terraform-apply-completed  
 
 permissions:
   contents: read
@@ -179,7 +182,7 @@ jobs:
 
   deploy-static:
     needs: check-changes
-    if: needs.check-changes.outputs.static == 'true'
+    if: needs.check-changes.outputs.static == 'true' || github.event_name == 'repository_dispatch'
     runs-on: ubuntu-latest
     env:
       AWS_REGION: eu-south-1
