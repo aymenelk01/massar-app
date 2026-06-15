@@ -16,6 +16,7 @@ jobs:
     outputs:
       app: ${{ steps.filter.outputs.app }}
       static: ${{ steps.filter.outputs.static }}
+      migrations: ${{ steps.filter.outputs.migrations }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -29,11 +30,98 @@ jobs:
               - 'app/static/**'
             app:
               - 'app/backend/**'
-              
+            migrations:
+              - 'app/flyway/**'  
+
+  deploy-migrations:
+    needs: check-changes
+    if: needs.check-changes.outputs.migrations == 'true'
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: eu-south-1
+      ECS_CLUSTER: dev-cluster
+      ECS_TASK_FAMILY: dev-flyway-task
+      ENVIRONMENT: dev
+      CONTAINER_NAME: flyway-migration
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: github-actions-deploy-migrations
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image URI
+        run: echo "IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/flyway-repository-dev" >> $GITHUB_ENV  
+
+      - name: Build the Docker image
+        run: docker build -t $IMAGE_URI:sha-${{ github.sha }} -t $IMAGE_URI:latest ./app/flyway
+
+      - name: Push the Docker image
+        run: |
+              docker push $IMAGE_URI:sha-${{ github.sha }} 
+              docker push $IMAGE_URI:latest
+
+      - name: Run Flyway migrations
+        run: |
+          # 1. Discover Security Group ID matching the exact Terraform Name tag
+          SG_ID=$(aws ec2 describe-security-groups \
+            --filters "Name=tag:Name,Values=ECS-SG-${{ env.ENVIRONMENT }}" \
+            --query "SecurityGroups[0].GroupId" \
+            --output text)
+          
+          # 2. Discover all Subnet IDs using wildcard to capture multi-AZ blocks (1, 2, 3)
+          SUBNET_IDS=$(aws ec2 describe-subnets \
+            --filters "Name=tag:Name,Values=PrivateAppSubnet-${{ env.ENVIRONMENT }}-*" \
+            --query "join(',', Subnets[*].SubnetId)" \
+            --output text)
+          
+          echo "Discovered Security Group ID: $SG_ID"
+          echo "Discovered Private Subnet IDs: $SUBNET_IDS"
+          
+          # Strict validation to prevent running task with empty variables
+          if [ -z "$SG_ID" ] || [ -z "$SUBNET_IDS" ] || [ "$SG_ID" = "None" ] || [ "$SUBNET_IDS" = "None" ]; then
+            echo "Critical Error: Unable to discover network resources. Verify AWS infrastructure state and tags."
+            exit 1
+          fi
+          
+          # 3. Execute the ECS task on Fargate with discovered resources
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "${{ env.ECS_CLUSTER }}" \
+            --task-definition "${{ env.ECS_TASK_FAMILY }}" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_IDS],securityGroups=[$SG_ID],assignPublicIp=DISABLED}" \
+            --query 'tasks[0].taskArn' --output text)
+          
+          echo "Launched Task ARN: $TASK_ARN"
+          
+          # 4. Wait for the task to finish execution
+          aws ecs wait tasks-stopped --cluster "${{ env.ECS_CLUSTER }}" --tasks "$TASK_ARN"
+          
+          # 5. Fetch execution results and parse exit code
+          TASK_DETAILS=$(aws ecs describe-tasks --cluster "${{ env.ECS_CLUSTER }}" --tasks "$TASK_ARN")
+          
+          EXIT_CODE=$(echo "$TASK_DETAILS" | jq -r '.tasks[0].containers[] | select(.name=="${{ env.CONTAINER_NAME }}").exitCode')
+          STOPPED_REASON=$(echo "$TASK_DETAILS" | jq -r '.tasks[0].stoppedReason')
+          
+          echo "Flyway Container Exit Code: $EXIT_CODE"
+          echo "ECS Task Stopped Reason: $STOPPED_REASON"
+          
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "Deployment failed. Review the ECS CloudWatch Logs for Task ARN: $TASK_ARN"
+            exit 1
+          fi
 
   deploy-app:
-    needs: check-changes
-    if: needs.check-changes.outputs.app == 'true'
+    needs: [check-changes, deploy-migrations]
+    if: needs.check-changes.outputs.app == 'true' && (needs.deploy-migrations.result == 'success' || needs.deploy-migrations.result == 'skipped')
     runs-on: ubuntu-latest
     env:
       AWS_REGION: eu-south-1
