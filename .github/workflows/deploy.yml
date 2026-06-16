@@ -209,6 +209,7 @@ jobs:
         with:
          node-version: '24'
          cache: 'npm' # Cache npm dependencies to speed up subsequent builds
+         cache-dependency-path: app/static/package-lock.json
 
       - name: Install dependencies and build static files
         working-directory: ./app/static
