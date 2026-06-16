@@ -125,7 +125,12 @@ jobs:
 
   deploy-app:
     needs: [check-changes, deploy-migrations]
-    if: needs.check-changes.outputs.app == 'true' && (needs.deploy-migrations.result == 'success' || needs.deploy-migrations.result == 'skipped')
+    if: |
+      always() &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled') &&
+      needs.check-changes.outputs.app == 'true' &&
+      (needs.deploy-migrations.result == 'success' || needs.deploy-migrations.result == 'skipped')
     runs-on: ubuntu-latest
     env:
       AWS_REGION: eu-south-1
