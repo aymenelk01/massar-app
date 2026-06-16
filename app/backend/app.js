@@ -856,7 +856,18 @@ async function syncExistingUsersToCognito() {
         console.log(`Auto-seeded student ${code_massar} to Cognito User Pool.`);
       } catch (err) {
         if (err.name === "UsernameExistsException") {
-          // Already registered, skip
+          // If the user already exists, ensure they have the correct permanent password set (moving them out of FORCE_CHANGE_PASSWORD if they were stuck)
+          try {
+            await cognitoClient.send(new AdminSetUserPasswordCommand({
+              UserPoolId: userPoolId,
+              Username: code_massar,
+              Password: "Massar2024!",
+              Permanent: true
+            }));
+            console.log(`Successfully reset/confirmed password for existing Cognito student: ${code_massar}`);
+          } catch (setPassErr) {
+            console.warn(`Failed to set password for existing student ${code_massar}:`, setPassErr.message);
+          }
           continue;
         }
         console.warn(`Failed to seed student ${code_massar} to Cognito:`, err.message);
