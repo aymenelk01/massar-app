@@ -16,6 +16,13 @@ const Redis = require("ioredis");
 const { CognitoJwtVerifier } = require("aws-jwt-verify");
 const { SecretsManagerClient, GetSecretValueCommand } = require("@aws-sdk/client-secrets-manager");
 const { SQSClient, SendMessageCommand } = require("@aws-sdk/client-sqs");
+const { 
+  CognitoIdentityProviderClient, 
+  AdminCreateUserCommand, 
+  AdminSetUserPasswordCommand, 
+  AdminDeleteUserCommand, 
+  AdminUpdateUserAttributesCommand 
+} = require("@aws-sdk/client-cognito-identity-provider");
 
 const app = express();
 app.use(express.json());
@@ -27,6 +34,7 @@ const PORT = process.env.PORT || 3000;
 // AWS Clients Instantiations (Credential loading is managed by ECS Task Role)
 const secretsClient = new SecretsManagerClient({ region: REGION });
 const sqsClient = new SQSClient({ region: REGION });
+const cognitoClient = new CognitoIdentityProviderClient({ region: REGION });
 
 // Global holders for Database Credentials and Pool
 let dbCredentials = null;
@@ -590,6 +598,45 @@ app.post("/api/admin/students", authMiddleware, adminMiddleware, async (req, res
       }
     }
 
+    // 2. Create Cognito user profile for the student
+    const userPoolId = process.env.COGNITO_USER_POOL_ID;
+    if (userPoolId) {
+      try {
+        // Create user in Cognito (SUPPRESS makes sure no verification email is sent)
+        await cognitoClient.send(new AdminCreateUserCommand({
+          UserPoolId: userPoolId,
+          Username: code_massar,
+          UserAttributes: [
+            { Name: "email", Value: cleanEmail },
+            { Name: "email_verified", Value: "true" },
+            { Name: "phone_number", Value: cleanPhone },
+            { Name: "phone_number_verified", Value: "true" },
+            { Name: "name", Value: cleanName }
+          ],
+          MessageAction: "SUPPRESS"
+        }));
+        console.log(`Successfully created Cognito user profile for student: ${code_massar}`);
+
+        // Set the permanent password (CodeMassar + "!") immediately to bypass FORCE_CHANGE_PASSWORD
+        const permanentPassword = `${code_massar}!`;
+        await cognitoClient.send(new AdminSetUserPasswordCommand({
+          UserPoolId: userPoolId,
+          Username: code_massar,
+          Password: permanentPassword,
+          Permanent: true
+        }));
+        console.log(`Successfully set permanent password for Cognito student: ${code_massar}`);
+
+      } catch (cognitoError) {
+        console.error(`Cognito registration failed for student ${code_massar}. Rolling back DB insertion...`, cognitoError.message);
+        // Rollback: delete student from the database so we don't have inconsistent states
+        await db.query("DELETE FROM students WHERE code_massar = ?", [code_massar]);
+        return res.status(500).json({ error: `Cognito User Pool registration failed: ${cognitoError.message}` });
+      }
+    } else {
+      console.warn("Warning: COGNITO_USER_POOL_ID is not defined. Skipping Cognito user registration.");
+    }
+
     return res.status(201).json({
       message: "Student successfully created",
       student: {
@@ -646,6 +693,27 @@ app.put("/api/admin/students/:id", authMiddleware, adminMiddleware, async (req, 
       "UPDATE students SET full_name = ?, email = ?, phone = ? WHERE id = ?",
       [cleanName, cleanEmail, cleanPhone, studentId]
     );
+
+    // Update attributes in Cognito User Pool
+    const userPoolId = process.env.COGNITO_USER_POOL_ID;
+    if (userPoolId) {
+      try {
+        await cognitoClient.send(new AdminUpdateUserAttributesCommand({
+          UserPoolId: userPoolId,
+          Username: code_massar,
+          UserAttributes: [
+            { Name: "email", Value: cleanEmail },
+            { Name: "email_verified", Value: "true" },
+            { Name: "phone_number", Value: cleanPhone },
+            { Name: "phone_number_verified", Value: "true" },
+            { Name: "name", Value: cleanName }
+          ]
+        }));
+        console.log(`Successfully updated attributes for Cognito user: ${code_massar}`);
+      } catch (cognitoError) {
+        console.warn(`Failed to update attributes for Cognito user ${code_massar} (might not exist in pool):`, cognitoError.message);
+      }
+    }
 
     // Invalidate/Delete Redis Cache key for the student
     const cacheKey = `results:${code_massar}`;
@@ -706,6 +774,20 @@ app.delete("/api/admin/students/:id", authMiddleware, adminMiddleware, async (re
       [studentId]
     );
 
+    // Delete user from Cognito User Pool
+    const userPoolId = process.env.COGNITO_USER_POOL_ID;
+    if (userPoolId) {
+      try {
+        await cognitoClient.send(new AdminDeleteUserCommand({
+          UserPoolId: userPoolId,
+          Username: code_massar
+        }));
+        console.log(`Successfully deleted Cognito user: ${code_massar}`);
+      } catch (cognitoError) {
+        console.warn(`Failed to delete Cognito user ${code_massar} (might not exist in pool):`, cognitoError.message);
+      }
+    }
+
     // Invalidate/Delete Redis Cache key for the student
     const cacheKey = `results:${code_massar}`;
     if (redis && redis.status === "ready") {
@@ -728,6 +810,60 @@ app.delete("/api/admin/students/:id", authMiddleware, adminMiddleware, async (re
   }
 });
 
+/**
+ * Automatically synchronizes any existing students in the database to Cognito.
+ * Runs once at startup to ensure the seeded mock students are ready to log in.
+ */
+async function syncExistingUsersToCognito() {
+  const userPoolId = process.env.COGNITO_USER_POOL_ID;
+  if (!userPoolId) {
+    console.warn("Skipping Cognito sync: COGNITO_USER_POOL_ID is not defined.");
+    return;
+  }
+
+  try {
+    const db = await getDbPool();
+    const [students] = await db.query("SELECT code_massar, full_name, email, phone FROM students");
+    console.log(`Checking/syncing ${students.length} students to Cognito User Pool...`);
+
+    for (const student of students) {
+      const { code_massar, full_name, email, phone } = student;
+      try {
+        // Create user in Cognito (SUPPRESS makes sure no verification email is sent)
+        await cognitoClient.send(new AdminCreateUserCommand({
+          UserPoolId: userPoolId,
+          Username: code_massar,
+          UserAttributes: [
+            { Name: "email", Value: email },
+            { Name: "email_verified", Value: "true" },
+            { Name: "phone_number", Value: phone },
+            { Name: "phone_number_verified", Value: "true" },
+            { Name: "name", Value: full_name }
+          ],
+          MessageAction: "SUPPRESS"
+        }));
+
+        // Set permanent password
+        await cognitoClient.send(new AdminSetUserPasswordCommand({
+          UserPoolId: userPoolId,
+          Username: code_massar,
+          Password: `${code_massar}!`,
+          Permanent: true
+        }));
+        console.log(`Auto-seeded student ${code_massar} to Cognito User Pool.`);
+      } catch (err) {
+        if (err.name === "UsernameExistsException") {
+          // Already registered, skip
+          continue;
+        }
+        console.warn(`Failed to seed student ${code_massar} to Cognito:`, err.message);
+      }
+    }
+  } catch (error) {
+    console.error("Failed to sync existing users to Cognito:", error.message);
+  }
+}
+
 // Asynchronous startup initialization function
 async function startupInitialization() {
   console.log("App booting. Initiating background AWS service connections...");
@@ -736,6 +872,8 @@ async function startupInitialization() {
   try {
     await getDbPool();
     console.log("Initial database connection check: SUCCESS.");
+    // Synchronize database records to Cognito User Pool
+    await syncExistingUsersToCognito();
   } catch (error) {
     console.warn("Initial database connection check: FAILED. Application will proceed to start, and retry connection on-demand.", error.message);
   }
