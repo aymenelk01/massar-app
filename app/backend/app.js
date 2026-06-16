@@ -618,8 +618,9 @@ app.post("/api/admin/students", authMiddleware, adminMiddleware, async (req, res
         }));
         console.log(`Successfully created Cognito user profile for student: ${code_massar}`);
 
-        // Set the permanent password (CodeMassar + "!") immediately to bypass FORCE_CHANGE_PASSWORD
-        const permanentPassword = `${code_massar}!`;
+        // Set a fixed permanent password that satisfies all Cognito policy requirements
+        // (uppercase, lowercase, digit, special char) to bypass FORCE_CHANGE_PASSWORD
+        const permanentPassword = "Massar2024!";
         await cognitoClient.send(new AdminSetUserPasswordCommand({
           UserPoolId: userPoolId,
           Username: code_massar,
@@ -844,11 +845,12 @@ async function syncExistingUsersToCognito() {
           MessageAction: "SUPPRESS"
         }));
 
-        // Set permanent password
+        // Set a fixed permanent password that satisfies all Cognito policy requirements
+        // (uppercase, lowercase, digit, special char)
         await cognitoClient.send(new AdminSetUserPasswordCommand({
           UserPoolId: userPoolId,
           Username: code_massar,
-          Password: `${code_massar}!`,
+          Password: "Massar2024!",
           Permanent: true
         }));
         console.log(`Auto-seeded student ${code_massar} to Cognito User Pool.`);
