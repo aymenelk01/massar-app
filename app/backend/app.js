@@ -879,7 +879,7 @@ async function startupInitialization() {
     console.warn("Initial database connection check: FAILED. Application will proceed to start, and retry connection on-demand.", error.message);
   }
 
-  // Attempt Redis connection check
+  // Attempt Redis connection check asynchronously
   if (redis) {
     redis.connect().catch((err) => {
       console.warn("Initial Redis connection check: FAILED. App will proceed and run with caching disabled.", err.message);
