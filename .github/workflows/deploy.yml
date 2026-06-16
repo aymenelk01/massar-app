@@ -17,14 +17,15 @@ jobs:
   check-changes:
     runs-on: ubuntu-latest
     outputs:
-      app: ${{ steps.filter.outputs.app }}
-      static: ${{ steps.filter.outputs.static }}
-      migrations: ${{ steps.filter.outputs.migrations }}
+      app: ${{ github.event_name != 'repository_dispatch' && steps.filter.outputs.app == 'true' }}
+      static: ${{ github.event_name == 'repository_dispatch' || steps.filter.outputs.static == 'true' }}
+      migrations: ${{ github.event_name != 'repository_dispatch' && steps.filter.outputs.migrations == 'true' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
 
       - name: Check for file changes
+        if: github.event_name != 'repository_dispatch'
         id: filter
         uses: dorny/paths-filter@v4
         with:
