@@ -64,7 +64,7 @@ if (process.env.ELASTICACHE_ENDPOINT) {
     const parts = redisHost.split(":");
     redisHost = parts[0];
     redisPort = parseInt(parts[1], 10);
-    
+
   }
 
   console.log(`Configuring Redis connection to ${redisHost}:${redisPort}`);
@@ -892,3 +892,6 @@ app.listen(PORT, () => {
   console.log(`Moroccan Ministry of Education (Massar Mock Portal) running on port ${PORT}`);
   startupInitialization();
 });
+
+
+
