@@ -873,8 +873,9 @@ async function syncExistingUsersToCognito() {
         console.warn(`Failed to seed student ${code_massar} to Cognito:`, err.message);
       }
     }
-  } catch (error) {
+    } catch (error) {
     console.error("Failed to sync existing users to Cognito:", error.message);
+    throw error;
   }
 }
 
@@ -882,14 +883,25 @@ async function syncExistingUsersToCognito() {
 async function startupInitialization() {
   console.log("App booting. Initiating background AWS service connections...");
   
-  // Attempt DB initialization asynchronously
-  try {
-    await getDbPool();
-    console.log("Initial database connection check: SUCCESS.");
-    // Synchronize database records to Cognito User Pool
-    await syncExistingUsersToCognito();
-  } catch (error) {
-    console.warn("Initial database connection check: FAILED. Application will proceed to start, and retry connection on-demand.", error.message);
+  // Attempt DB initialization and run sync with retries
+  const maxRetries = 5;
+  const retryDelayMs = 10000;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await getDbPool();
+      await syncExistingUsersToCognito();
+      console.log("Existing users synchronization completed successfully.");
+      break; // Success, exit retry loop
+    } catch (error) {
+      console.warn(`Cognito user synchronization attempt ${attempt}/${maxRetries} failed:`, error.message);
+      if (attempt < maxRetries) {
+        console.log(`Retrying user synchronization in ${retryDelayMs / 1000}s...`);
+        await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+      } else {
+        console.error("Critical: Could not sync database mock users to Cognito after max retries.");
+      }
+    }
   }
 
   // Attempt Redis connection check asynchronously
