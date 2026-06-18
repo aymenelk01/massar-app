@@ -9,6 +9,7 @@ const API_BASE_URL = "/api";
 const loadingState      = document.getElementById("loading-state");
 const studentsCard      = document.getElementById("students-card");
 const studentsTbody     = document.getElementById("students-tbody");
+const teachersCard      = document.getElementById("teachers-card");
 const successAlert      = document.getElementById("success-alert");
 const successAlertText  = document.getElementById("success-alert-text");
 const errorAlert        = document.getElementById("error-alert");
