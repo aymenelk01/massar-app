@@ -254,7 +254,7 @@ function renderStudentsTable() {
       <td style="text-align: center; display: flex; gap: 8px; justify-content: center;">
         <button class="btn btn--ghost btn--sm edit-student-action" type="button">Edit</button>
         <button class="btn btn--ghost btn--sm toggle-student-status-action" type="button" style="${toggleButtonStyle}">${toggleButtonLabel}</button>
-        <button class="btn btn--ghost btn--sm btn--danger delete-student-action" type="button" style="color: var(--red-600); border-color: #f5c6c2;">Delete</button>
+        <button class="btn btn--ghost btn--sm btn--danger delete-student-action" type="button">Delete</button>
       </td>
     `;
 
@@ -586,7 +586,7 @@ function renderTeachersTable() {
       <td style="text-align: center; display: flex; gap: 8px; justify-content: center;">
         <button class="btn btn--ghost btn--sm edit-teacher-action" type="button">Edit</button>
         <button class="btn btn--ghost btn--sm toggle-teacher-status-action" type="button" style="${toggleButtonStyle}">${toggleButtonLabel}</button>
-        <button class="btn btn--ghost btn--sm btn--danger delete-teacher-action" type="button" style="color: var(--red-600); border-color: #f5c6c2;">Delete</button>
+        <button class="btn btn--ghost btn--sm btn--danger delete-teacher-action" type="button">Delete</button>
       </td>
     `;
 
