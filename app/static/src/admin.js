@@ -63,6 +63,13 @@ const teacherModalErrorText  = document.getElementById("teacher-modal-error-text
 
 const logoutBtn            = document.getElementById("logout-btn");
 
+// Confirm Dialog Modal references
+const confirmModalBackdrop = document.getElementById("confirm-modal-backdrop");
+const confirmModalTitle    = document.getElementById("confirm-modal-title");
+const confirmModalMessage  = document.getElementById("confirm-modal-message");
+const confirmOkBtn         = document.getElementById("confirm-ok-btn");
+const confirmCancelBtn     = document.getElementById("confirm-cancel-btn");
+
 // Global states
 let activeTab = "students";
 let studentsList = [];
@@ -133,6 +140,41 @@ function hideAlerts() {
   const modalErrorAlert = document.getElementById("modal-error-alert");
   if (modalErrorAlert) modalErrorAlert.hidden = true;
   if (teacherModalErrorAlert) teacherModalErrorAlert.hidden = true;
+}
+
+// ── Confirm Dialog ─────────────────────────────────────────────────────────
+/**
+ * Shows a modern confirmation dialog instead of the native browser confirm().
+ * @param {string} title - Modal heading
+ * @param {string} message - Body text
+ * @param {{ confirmLabel?: string, danger?: boolean }} options
+ * @returns {Promise<boolean>} resolves true if user confirms, false if cancelled
+ */
+function showConfirm(title, message, { confirmLabel = "Confirm", danger = true } = {}) {
+  return new Promise((resolve) => {
+    confirmModalTitle.textContent = title;
+    confirmModalMessage.textContent = message;
+    confirmOkBtn.textContent = confirmLabel;
+    confirmOkBtn.className = `btn ${danger ? "btn--danger" : "btn--primary"}`;
+    confirmModalBackdrop.style.display = "flex";
+    confirmOkBtn.focus();
+
+    function onOk() { close(true); }
+    function onCancel() { close(false); }
+    function onBackdrop(e) { if (e.target === confirmModalBackdrop) close(false); }
+
+    function close(result) {
+      confirmModalBackdrop.style.display = "none";
+      confirmOkBtn.removeEventListener("click", onOk);
+      confirmCancelBtn.removeEventListener("click", onCancel);
+      confirmModalBackdrop.removeEventListener("click", onBackdrop);
+      resolve(result);
+    }
+
+    confirmOkBtn.addEventListener("click", onOk);
+    confirmCancelBtn.addEventListener("click", onCancel);
+    confirmModalBackdrop.addEventListener("click", onBackdrop);
+  });
 }
 
 // ── Fetch and Render Students ──────────────────────────────────────────────
@@ -341,8 +383,12 @@ studentForm.addEventListener("submit", async function (e) {
 
 // ── Delete Student Record ──────────────────────────────────────────────────
 async function deleteStudent(student) {
-  const confirmDelete = confirm(`Are you sure you want to delete student "${student.full_name}" (${student.code_massar})?\nThis action will also delete all their subject grades and cannot be undone.`);
-  if (!confirmDelete) return;
+  const confirmed = await showConfirm(
+    "Delete Student",
+    `Are you sure you want to delete "${student.full_name}" (${student.code_massar})? This will permanently remove all their subject grades and cannot be undone.`,
+    { confirmLabel: "Delete", danger: true }
+  );
+  if (!confirmed) return;
 
   try {
     const response = await fetch(`${API_BASE_URL}/admin/students/${student.id}`, {
@@ -381,8 +427,12 @@ async function toggleStudentStatus(student) {
   const isEnabled = student.enabled !== 0;
   const targetStatus = !isEnabled;
   const actionText = targetStatus ? "enable" : "disable";
-  const confirmAction = confirm(`Are you sure you want to ${actionText} the student account "${student.full_name}" (${student.code_massar})?`);
-  if (!confirmAction) return;
+  const confirmed = await showConfirm(
+    `${targetStatus ? "Enable" : "Suspend"} Student Account`,
+    `Are you sure you want to ${actionText} the account for "${student.full_name}" (${student.code_massar})?`,
+    { confirmLabel: targetStatus ? "Enable" : "Suspend", danger: !targetStatus }
+  );
+  if (!confirmed) return;
 
   try {
     const response = await fetch(`${API_BASE_URL}/admin/students/${student.id}/status`, {
@@ -418,8 +468,12 @@ async function toggleStudentStatus(student) {
 
 // ── Release Results Notifications (SQS) ───────────────────────────────────
 async function triggerReleaseResults() {
-  const confirmRelease = confirm("Are you sure you want to release exam results to all students?\nThis will queue SMS/email alerts for all registered student records.");
-  if (!confirmRelease) return;
+  const confirmed = await showConfirm(
+    "Release Exam Results",
+    "Are you sure you want to release exam results to all students? This will queue SMS and email notifications for every registered student record.",
+    { confirmLabel: "Release Results", danger: false }
+  );
+  if (!confirmed) return;
 
   hideAlerts();
   releaseResultsBtn.disabled = true;
@@ -680,8 +734,12 @@ teacherForm.addEventListener("submit", async function (e) {
 
 // ── Delete Teacher Record ──────────────────────────────────────────────────
 async function deleteTeacher(teacher) {
-  const confirmDelete = confirm(`Are you sure you want to delete teacher "${teacher.full_name}" (${teacher.username})?\nThis action cannot be undone.`);
-  if (!confirmDelete) return;
+  const confirmed = await showConfirm(
+    "Delete Teacher",
+    `Are you sure you want to delete "${teacher.full_name}" (@${teacher.username})? This will also remove their Cognito account and cannot be undone.`,
+    { confirmLabel: "Delete", danger: true }
+  );
+  if (!confirmed) return;
 
   try {
     const response = await fetch(`${API_BASE_URL}/admin/teachers/${teacher.username}`, {
@@ -720,8 +778,12 @@ async function toggleTeacherStatus(teacher) {
   const isEnabled = teacher.enabled !== 0;
   const targetStatus = !isEnabled;
   const actionText = targetStatus ? "enable" : "disable";
-  const confirmAction = confirm(`Are you sure you want to ${actionText} the teacher account "${teacher.full_name}" (${teacher.username})?`);
-  if (!confirmAction) return;
+  const confirmed = await showConfirm(
+    `${targetStatus ? "Enable" : "Suspend"} Teacher Account`,
+    `Are you sure you want to ${actionText} the account for "${teacher.full_name}" (@${teacher.username})?`,
+    { confirmLabel: targetStatus ? "Enable" : "Suspend", danger: !targetStatus }
+  );
+  if (!confirmed) return;
 
   try {
     const response = await fetch(`${API_BASE_URL}/admin/teachers/${teacher.username}/status`, {

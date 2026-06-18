@@ -348,6 +348,23 @@ body {
   box-shadow: none !important;
 }
 
+.btn--danger {
+  background: var(--red-600);
+  color: var(--white);
+  border-color: transparent;
+  box-shadow: 0 2px 8px rgba(198,40,40,0.2);
+}
+
+.btn--danger:hover:not(:disabled) {
+  background: #b71c1c;
+  box-shadow: 0 4px 14px rgba(198,40,40,0.35);
+  transform: translateY(-1px);
+}
+
+.btn--danger:active:not(:disabled) {
+  transform: translateY(0);
+}
+
 /* ---------- Spinner ---------- */
 .spinner {
   width: 18px;
