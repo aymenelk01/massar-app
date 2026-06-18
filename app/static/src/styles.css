@@ -859,3 +859,33 @@ body {
   }
 }
 
+/* ---------- Tabs System ---------- */
+.tab-container {
+  display: flex;
+  gap: 8px;
+  border-bottom: 2px solid var(--neutral-100);
+  margin-bottom: 24px;
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  padding: 12px 20px;
+  font-family: var(--font-stack);
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--neutral-600);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color var(--transition), border-color var(--transition);
+}
+
+.tab-btn:hover {
+  color: var(--neutral-800);
+}
+
+.tab-btn--active {
+  color: var(--green-700);
+  border-bottom-color: var(--green-700);
+}
