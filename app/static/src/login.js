@@ -131,7 +131,11 @@ form.addEventListener("submit", async function (event) {
     window.location.replace(targetRoute);
   } catch (networkError) {
     console.error("Network error during login:", networkError);
-    showError("Your Massar Code or password is incorrect. Please try again.");
+    if (networkError && networkError.code === "NotAuthorizedException" && networkError.message && networkError.message.toLowerCase().includes("disabled")) {
+      showError("Your account has been suspended. Please contact the administrator.");
+    } else {
+      showError("Your Massar Code or password is incorrect. Please try again.");
+    }
   } finally {
     setLoading(false);
   }
