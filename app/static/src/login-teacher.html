@@ -3,10 +3,29 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="Massar Portal — Student Results Login" />
-  <title>Student Login — Massar Portal</title>
+  <meta name="description" content="Massar Portal — Teacher Portal Login" />
+  <title>Teacher Login — Massar Portal</title>
   <link rel="stylesheet" href="styles.css" />
-  <script>window.PORTAL_ROLE = "student";</script>
+  <!-- Override primary colour to blue for the teacher portal -->
+  <style>
+    :root {
+      --portal-primary:       #1A56DB;
+      --portal-primary-hover: #1E429F;
+      --portal-badge-bg:      #EBF5FF;
+      --portal-badge-border:  #93C5FD;
+      --portal-badge-color:   #1A56DB;
+      --portal-link-color:    #1A56DB;
+    }
+    .btn--primary {
+      background: var(--portal-primary);
+      box-shadow: 0 2px 8px rgba(26,86,219,0.22);
+    }
+    .btn--primary:hover:not(:disabled) {
+      background: var(--portal-primary-hover);
+      box-shadow: 0 4px 14px rgba(26,86,219,0.32);
+    }
+  </style>
+  <script>window.PORTAL_ROLE = "teacher";</script>
 </head>
 <body>
   <div class="page-wrapper">
@@ -28,9 +47,9 @@
 
         <!-- Role badge -->
         <div style="display: flex; justify-content: center; margin-bottom: 8px;">
-          <span style="display: inline-flex; align-items: center; gap: 6px; background: #e8f5e9; color: var(--green-700); font-size: 0.78rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 4px 14px; border-radius: 999px; border: 1px solid #a5d6a7;">
-            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c0 2 2 3 6 3s6-1 6-3v-5"/></svg>
-            Student Portal
+          <span style="display: inline-flex; align-items: center; gap: 6px; background: var(--portal-badge-bg); color: var(--portal-badge-color); font-size: 0.78rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 4px 14px; border-radius: 999px; border: 1px solid var(--portal-badge-border);">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            Teacher Portal
           </span>
         </div>
 
@@ -38,20 +57,20 @@
         <div class="brand">
           <img class="brand__logo" src="logo.svg" alt="Massar Logo" width="56" height="56" />
           <h1 class="brand__title">Massar</h1>
-          <p class="brand__subtitle">Access your exam results and academic record</p>
+          <p class="brand__subtitle">Submit grades and manage student academic records</p>
         </div>
 
         <!-- Login form -->
         <form id="login-form" class="form" novalidate>
           <div class="form-group">
-            <label class="form-label" for="username">Massar Code <span class="required" aria-hidden="true">*</span></label>
+            <label class="form-label" for="username">Username <span class="required" aria-hidden="true">*</span></label>
             <input
               class="form-input"
               type="text"
               id="username"
               name="username"
               autocomplete="username"
-              placeholder="e.g. K130029841"
+              placeholder="e.g. t.bennani"
               required
               aria-required="true"
             />
@@ -96,7 +115,7 @@
         <p class="help-text">
           For assistance, contact your school administration.
           <br/>
-          <a href="index.html" style="color: var(--green-700); font-size: 0.82rem;">← Back to portal selection</a>
+          <a href="index.html" style="color: var(--portal-link-color); font-size: 0.82rem;">← Back to portal selection</a>
         </p>
       </div>
     </main>

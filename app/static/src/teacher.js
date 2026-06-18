@@ -74,7 +74,7 @@ if (!accessToken || !idToken) {
 // ── Helper: Clear session and redirect to login ───────────────────────────
 function handleSessionExpiry() {
   sessionStorage.clear();
-  window.location.replace("login.html");
+  window.location.replace("login-teacher.html");
 }
 
 // ── Alert Helpers ──────────────────────────────────────────────────────────

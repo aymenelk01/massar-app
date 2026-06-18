@@ -3,10 +3,29 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="Massar Portal — Student Results Login" />
-  <title>Student Login — Massar Portal</title>
+  <meta name="description" content="Massar Portal — Administrator Login" />
+  <title>Admin Login — Massar Portal</title>
   <link rel="stylesheet" href="styles.css" />
-  <script>window.PORTAL_ROLE = "student";</script>
+  <!-- Override primary colour to deep indigo for the admin portal -->
+  <style>
+    :root {
+      --portal-primary:       #3730A3;
+      --portal-primary-hover: #312E81;
+      --portal-badge-bg:      #EDE9FE;
+      --portal-badge-border:  #C4B5FD;
+      --portal-badge-color:   #3730A3;
+      --portal-link-color:    #3730A3;
+    }
+    .btn--primary {
+      background: var(--portal-primary);
+      box-shadow: 0 2px 8px rgba(55,48,163,0.22);
+    }
+    .btn--primary:hover:not(:disabled) {
+      background: var(--portal-primary-hover);
+      box-shadow: 0 4px 14px rgba(55,48,163,0.32);
+    }
+  </style>
+  <script>window.PORTAL_ROLE = "admin";</script>
 </head>
 <body>
   <div class="page-wrapper">
@@ -28,9 +47,9 @@
 
         <!-- Role badge -->
         <div style="display: flex; justify-content: center; margin-bottom: 8px;">
-          <span style="display: inline-flex; align-items: center; gap: 6px; background: #e8f5e9; color: var(--green-700); font-size: 0.78rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 4px 14px; border-radius: 999px; border: 1px solid #a5d6a7;">
-            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c0 2 2 3 6 3s6-1 6-3v-5"/></svg>
-            Student Portal
+          <span style="display: inline-flex; align-items: center; gap: 6px; background: var(--portal-badge-bg); color: var(--portal-badge-color); font-size: 0.78rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 4px 14px; border-radius: 999px; border: 1px solid var(--portal-badge-border);">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            Administration Portal
           </span>
         </div>
 
@@ -38,20 +57,20 @@
         <div class="brand">
           <img class="brand__logo" src="logo.svg" alt="Massar Logo" width="56" height="56" />
           <h1 class="brand__title">Massar</h1>
-          <p class="brand__subtitle">Access your exam results and academic record</p>
+          <p class="brand__subtitle">System administration and user management</p>
         </div>
 
         <!-- Login form -->
         <form id="login-form" class="form" novalidate>
           <div class="form-group">
-            <label class="form-label" for="username">Massar Code <span class="required" aria-hidden="true">*</span></label>
+            <label class="form-label" for="username">Admin Username <span class="required" aria-hidden="true">*</span></label>
             <input
               class="form-input"
               type="text"
               id="username"
               name="username"
               autocomplete="username"
-              placeholder="e.g. K130029841"
+              placeholder="Enter admin username"
               required
               aria-required="true"
             />
@@ -93,10 +112,8 @@
           </button>
         </form>
 
-        <p class="help-text">
-          For assistance, contact your school administration.
-          <br/>
-          <a href="index.html" style="color: var(--green-700); font-size: 0.82rem;">← Back to portal selection</a>
+        <p class="help-text" style="text-align: center;">
+          Restricted access — authorised personnel only.
         </p>
       </div>
     </main>
