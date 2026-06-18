@@ -14,11 +14,18 @@ const successAlertText  = document.getElementById("success-alert-text");
 const errorAlert        = document.getElementById("error-alert");
 const errorAlertText    = document.getElementById("error-alert-text");
 
+// Tabs references
+const tabStudents       = document.getElementById("tab-students");
+const tabTeachers       = document.getElementById("tab-teachers");
+const studentsTabContent = document.getElementById("students-tab-content");
+const teachersTabContent = document.getElementById("teachers-tab-content");
+
 // Actions references
 const addStudentBtn     = document.getElementById("add-student-btn");
 const releaseResultsBtn = document.getElementById("release-results-btn");
+const addTeacherBtn     = document.getElementById("add-teacher-btn");
 
-// Modal references
+// Student Modal references
 const studentModalBackdrop = document.getElementById("student-modal-backdrop");
 const modalCloseBtn        = document.getElementById("modal-close-btn");
 const modalCancelBtn       = document.getElementById("modal-cancel-btn");
@@ -33,10 +40,32 @@ const saveBtnLabel         = document.getElementById("save-btn-label");
 const saveBtnSpinner       = document.getElementById("save-btn-spinner");
 const modalSaveBtn         = document.getElementById("modal-save-btn");
 
+// Teacher Modal references
+const teacherModalBackdrop   = document.getElementById("teacher-modal-backdrop");
+const teacherModalCloseBtn   = document.getElementById("teacher-modal-close-btn");
+const teacherModalCancelBtn  = document.getElementById("teacher-modal-cancel-btn");
+const teacherForm            = document.getElementById("teacher-form");
+const teacherModalTitle       = document.getElementById("teacher-modal-title");
+const teacherUsernameGroup   = document.getElementById("teacher-username-group");
+const teacherUsernameInput   = document.getElementById("teacher-username");
+const teacherNameInput       = document.getElementById("teacher-name");
+const teacherEmailInput      = document.getElementById("teacher-email");
+const teacherPhoneInput      = document.getElementById("teacher-phone");
+const teacherSubjectInput    = document.getElementById("teacher-subject");
+
+const teacherSaveBtnLabel    = document.getElementById("teacher-save-btn-label");
+const teacherSaveBtnSpinner  = document.getElementById("teacher-save-btn-spinner");
+const teacherModalSaveBtn    = document.getElementById("teacher-modal-save-btn");
+const teacherModalErrorAlert = document.getElementById("teacher-modal-error-alert");
+const teacherModalErrorText  = document.getElementById("teacher-modal-error-text");
+
 const logoutBtn            = document.getElementById("logout-btn");
 
 // Global states
+let activeTab = "students";
 let studentsList = [];
+let teachersList = [];
+let isEditTeacherMode = false;
 
 // ── Auth Guard: Verify session tokens and Cognito admins group ────────────
 const accessToken = sessionStorage.getItem("access_token");
@@ -101,6 +130,7 @@ function hideAlerts() {
   errorAlert.hidden = true;
   const modalErrorAlert = document.getElementById("modal-error-alert");
   if (modalErrorAlert) modalErrorAlert.hidden = true;
+  if (teacherModalErrorAlert) teacherModalErrorAlert.hidden = true;
 }
 
 // ── Fetch and Render Students ──────────────────────────────────────────────
@@ -150,7 +180,7 @@ function renderStudentsTable() {
 
   if (studentsList.length === 0) {
     const row = document.createElement("tr");
-    row.innerHTML = `<td colspan="6" style="text-align: center; color: var(--neutral-600);">No student records found.</td>`;
+    row.innerHTML = `<td colspan="7" style="text-align: center; color: var(--neutral-600);">No student records found.</td>`;
     studentsTbody.appendChild(row);
     return;
   }
@@ -158,6 +188,13 @@ function renderStudentsTable() {
   studentsList.forEach(student => {
     const statusLabel = student.result || "Ajourné";
     const statusClass = statusLabel === "Admis" ? "badge-status--admis" : "badge-status--ajourne";
+
+    const isEnabled = student.enabled !== 0; // Default enabled
+    const accountLabel = isEnabled ? "Active" : "Suspended";
+    const accountClass = isEnabled ? "badge-status--admis" : "badge-status--ajourne";
+    const toggleButtonLabel = isEnabled ? "Disable" : "Enable";
+    const toggleButtonClass = isEnabled ? "toggle-student-status-action" : "toggle-student-status-action";
+    const toggleButtonStyle = isEnabled ? "color: var(--red-600); border-color: #f5c6c2;" : "color: var(--green-700); border-color: #a3d9b1;";
 
     const row = document.createElement("tr");
     row.innerHTML = `
@@ -168,8 +205,12 @@ function renderStudentsTable() {
       <td style="text-align: center;">
         <span class="badge-status ${statusClass}">${statusLabel}</span>
       </td>
+      <td style="text-align: center;">
+        <span class="badge-status ${accountClass}">${accountLabel}</span>
+      </td>
       <td style="text-align: center; display: flex; gap: 8px; justify-content: center;">
         <button class="btn btn--ghost btn--sm edit-student-action" type="button">Edit</button>
+        <button class="btn btn--ghost btn--sm ${toggleButtonClass}" type="button" style="${toggleButtonStyle}">${toggleButtonLabel}</button>
         <button class="btn btn--ghost btn--sm btn--danger delete-student-action" type="button" style="color: var(--red-600); border-color: #f5c6c2;">Delete</button>
       </td>
     `;
@@ -177,6 +218,11 @@ function renderStudentsTable() {
     // Hook edit action
     row.querySelector(".edit-student-action").addEventListener("click", () => {
       openStudentModal(student);
+    });
+
+    // Hook toggle status action
+    row.querySelector(".toggle-student-status-action").addEventListener("click", () => {
+      toggleStudentStatus(student);
     });
 
     // Hook delete action
@@ -329,6 +375,46 @@ async function deleteStudent(student) {
   }
 }
 
+// ── Toggle Student Account Status ─────────────────────────────────────────
+async function toggleStudentStatus(student) {
+  const isEnabled = student.enabled !== 0;
+  const targetStatus = !isEnabled;
+  const actionText = targetStatus ? "enable" : "disable";
+  const confirmAction = confirm(`Are you sure you want to ${actionText} the student account "${student.full_name}" (${student.code_massar})?`);
+  if (!confirmAction) return;
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/admin/students/${student.id}/status`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${accessToken}`
+      },
+      body: JSON.stringify({ enabled: targetStatus })
+    });
+
+    if (response.status === 401 || response.status === 403) {
+      handleSessionExpiry();
+      return;
+    }
+
+    let data = {};
+    try {
+      data = await response.json();
+    } catch (_) {}
+
+    if (response.ok) {
+      showSuccess(`Successfully ${targetStatus ? "enabled" : "disabled"} student account "${student.full_name}".`);
+      await loadStudents();
+    } else {
+      showError(data.error || `Failed to update status for student "${student.full_name}".`);
+    }
+  } catch (err) {
+    console.error("Error toggling student status:", err);
+    showError("Could not connect to the server to update the student account status.");
+  }
+}
+
 // ── Release Results Notifications (SQS) ───────────────────────────────────
 async function triggerReleaseResults() {
   const confirmRelease = confirm("Are you sure you want to release exam results to all students?\nThis will queue SMS/email alerts for all registered student records.");
@@ -373,6 +459,302 @@ async function triggerReleaseResults() {
   }
 }
 
+// ── Fetch and Render Teachers ──────────────────────────────────────────────
+async function loadTeachers() {
+  try {
+    loadingState.hidden = false;
+    teachersCard.hidden = true;
+
+    const response = await fetch(`${API_BASE_URL}/admin/teachers`, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${accessToken}`
+      }
+    });
+
+    if (response.status === 401 || response.status === 403) {
+      handleSessionExpiry();
+      return;
+    }
+
+    let data = [];
+    try {
+      data = await response.json();
+    } catch (_) {
+      // Ignore
+    }
+
+    if (response.ok) {
+      teachersList = data;
+      renderTeachersTable();
+      loadingState.hidden = true;
+      teachersCard.hidden = false;
+    } else {
+      const serverMessage = data.message || data.error || "Failed to load teacher directory.";
+      showError(serverMessage);
+      loadingState.hidden = true;
+    }
+  } catch (err) {
+    console.error("Error loading teachers list:", err);
+    showError("Could not retrieve teacher list. Please check your network connection.");
+    loadingState.hidden = true;
+  }
+}
+
+function renderTeachersTable() {
+  teachersTbody.innerHTML = "";
+
+  if (teachersList.length === 0) {
+    const row = document.createElement("tr");
+    row.innerHTML = `<td colspan="7" style="text-align: center; color: var(--neutral-600);">No teacher records found.</td>`;
+    teachersTbody.appendChild(row);
+    return;
+  }
+
+  teachersList.forEach(teacher => {
+    const isEnabled = teacher.enabled !== 0; // Default enabled
+    const accountLabel = isEnabled ? "Active" : "Suspended";
+    const accountClass = isEnabled ? "badge-status--admis" : "badge-status--ajourne";
+    const toggleButtonLabel = isEnabled ? "Disable" : "Enable";
+    const toggleButtonClass = isEnabled ? "toggle-teacher-status-action" : "toggle-teacher-status-action";
+    const toggleButtonStyle = isEnabled ? "color: var(--red-600); border-color: #f5c6c2;" : "color: var(--green-700); border-color: #a3d9b1;";
+
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td><strong>${teacher.username || "—"}</strong></td>
+      <td>${teacher.full_name || "—"}</td>
+      <td>${teacher.email || "—"}</td>
+      <td>${teacher.phone || "—"}</td>
+      <td>${teacher.subject || "—"}</td>
+      <td style="text-align: center;">
+        <span class="badge-status ${accountClass}">${accountLabel}</span>
+      </td>
+      <td style="text-align: center; display: flex; gap: 8px; justify-content: center;">
+        <button class="btn btn--ghost btn--sm edit-teacher-action" type="button">Edit</button>
+        <button class="btn btn--ghost btn--sm ${toggleButtonClass}" type="button" style="${toggleButtonStyle}">${toggleButtonLabel}</button>
+        <button class="btn btn--ghost btn--sm btn--danger delete-teacher-action" type="button" style="color: var(--red-600); border-color: #f5c6c2;">Delete</button>
+      </td>
+    `;
+
+    // Hook edit action
+    row.querySelector(".edit-teacher-action").addEventListener("click", () => {
+      openTeacherModal(teacher);
+    });
+
+    // Hook toggle status action
+    row.querySelector(".toggle-teacher-status-action").addEventListener("click", () => {
+      toggleTeacherStatus(teacher);
+    });
+
+    // Hook delete action
+    row.querySelector(".delete-teacher-action").addEventListener("click", () => {
+      deleteTeacher(teacher);
+    });
+
+    teachersTbody.appendChild(row);
+  });
+}
+
+// ── Teacher Modal Actions ──────────────────────────────────────────────────
+function openTeacherModal(teacher = null) {
+  hideAlerts();
+  
+  if (teacher) {
+    // Edit mode
+    isEditTeacherMode = true;
+    teacherModalTitle.textContent = "Edit Teacher Profile";
+    teacherSaveBtnLabel.textContent = "Save Changes";
+    teacherUsernameGroup.style.display = "none";
+    teacherUsernameInput.required = false;
+    teacherUsernameInput.value = teacher.username || "";
+    teacherNameInput.value = teacher.full_name || "";
+    teacherEmailInput.value = teacher.email || "";
+    teacherPhoneInput.value = teacher.phone || "";
+    teacherSubjectInput.value = teacher.subject || "";
+  } else {
+    // Create mode
+    isEditTeacherMode = false;
+    teacherModalTitle.textContent = "Add Teacher";
+    teacherSaveBtnLabel.textContent = "Save Teacher";
+    teacherUsernameGroup.style.display = "flex";
+    teacherUsernameInput.required = true;
+    teacherUsernameInput.value = "";
+    teacherNameInput.value = "";
+    teacherEmailInput.value = "";
+    teacherPhoneInput.value = "";
+    teacherSubjectInput.value = "";
+  }
+
+  teacherModalBackdrop.style.display = "flex";
+  if (!teacher) {
+    teacherUsernameInput.focus();
+  } else {
+    teacherNameInput.focus();
+  }
+}
+
+function closeTeacherModal() {
+  teacherModalBackdrop.style.display = "none";
+}
+
+function setTeacherModalLoading(loading) {
+  teacherModalSaveBtn.disabled = loading;
+  teacherModalCancelBtn.disabled = loading;
+  teacherModalCloseBtn.disabled = loading;
+  teacherSaveBtnLabel.textContent = loading ? "Saving..." : (isEditTeacherMode ? "Save Changes" : "Save Teacher");
+  teacherSaveBtnSpinner.hidden = !loading;
+}
+
+function showTeacherModalError(message) {
+  teacherModalErrorText.textContent = message;
+  teacherModalErrorAlert.hidden = false;
+}
+
+// ── Teacher Form Submission ─────────────────────────────────────────────────
+teacherForm.addEventListener("submit", async function (e) {
+  e.preventDefault();
+  hideAlerts();
+
+  const username = teacherUsernameInput.value.trim();
+  const name  = teacherNameInput.value.trim();
+  const email = teacherEmailInput.value.trim();
+  const phone = teacherPhoneInput.value.trim();
+  const subject = teacherSubjectInput.value;
+
+  if ((!isEditTeacherMode && !username) || !name || !email || !phone || !subject) {
+    showTeacherModalError("All profile fields are required.");
+    return;
+  }
+
+  setTeacherModalLoading(true);
+
+  try {
+    const url = isEditTeacherMode ? `${API_BASE_URL}/admin/teachers/${username}` : `${API_BASE_URL}/admin/teachers`;
+    const method = isEditTeacherMode ? "PUT" : "POST";
+
+    const response = await fetch(url, {
+      method: method,
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${accessToken}`
+      },
+      body: JSON.stringify({
+        username: username,
+        full_name: name,
+        email: email,
+        phone: phone,
+        subject: subject
+      })
+    });
+
+    if (response.status === 401 || response.status === 403) {
+      handleSessionExpiry();
+      return;
+    }
+
+    let data = {};
+    try {
+      data = await response.json();
+    } catch (_) {
+      // Ignore
+    }
+
+    if (response.ok) {
+      const successMsg = isEditTeacherMode 
+        ? `Successfully updated teacher profile for ${name}.` 
+        : `Successfully created teacher ${name} with password Massar2024!.`;
+      
+      showSuccess(successMsg);
+      closeTeacherModal();
+      await loadTeachers();
+    } else {
+      showTeacherModalError(data.error || "Failed to process teacher profile request.");
+    }
+  } catch (err) {
+    console.error("Error submitting teacher form:", err);
+    showTeacherModalError("Failed to connect to the server. Please verify connection.");
+  } finally {
+    setTeacherModalLoading(false);
+  }
+});
+
+// ── Delete Teacher Record ──────────────────────────────────────────────────
+async function deleteTeacher(teacher) {
+  const confirmDelete = confirm(`Are you sure you want to delete teacher "${teacher.full_name}" (${teacher.username})?\nThis action cannot be undone.`);
+  if (!confirmDelete) return;
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/admin/teachers/${teacher.username}`, {
+      method: "DELETE",
+      headers: {
+        "Authorization": `Bearer ${accessToken}`
+      }
+    });
+
+    if (response.status === 401 || response.status === 403) {
+      handleSessionExpiry();
+      return;
+    }
+
+    let data = {};
+    try {
+      data = await response.json();
+    } catch (_) {
+      // Ignore
+    }
+
+    if (response.ok) {
+      showSuccess(`Successfully deleted teacher "${teacher.full_name}".`);
+      await loadTeachers();
+    } else {
+      showError(data.error || `Failed to delete teacher "${teacher.full_name}".`);
+    }
+  } catch (err) {
+    console.error("Error deleting teacher:", err);
+    showError("Could not connect to the server to delete the teacher.");
+  }
+}
+
+// ── Toggle Teacher Account Status ─────────────────────────────────────────
+async function toggleTeacherStatus(teacher) {
+  const isEnabled = teacher.enabled !== 0;
+  const targetStatus = !isEnabled;
+  const actionText = targetStatus ? "enable" : "disable";
+  const confirmAction = confirm(`Are you sure you want to ${actionText} the teacher account "${teacher.full_name}" (${teacher.username})?`);
+  if (!confirmAction) return;
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/admin/teachers/${teacher.username}/status`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${accessToken}`
+      },
+      body: JSON.stringify({ enabled: targetStatus })
+    });
+
+    if (response.status === 401 || response.status === 403) {
+      handleSessionExpiry();
+      return;
+    }
+
+    let data = {};
+    try {
+      data = await response.json();
+    } catch (_) {}
+
+    if (response.ok) {
+      showSuccess(`Successfully ${targetStatus ? "enabled" : "disabled"} teacher account "${teacher.full_name}".`);
+      await loadTeachers();
+    } else {
+      showError(data.error || `Failed to update status for teacher "${teacher.full_name}".`);
+    }
+  } catch (err) {
+    console.error("Error toggling teacher status:", err);
+    showError("Could not connect to the server to update the teacher account status.");
+  }
+}
+
 // ── Event Handlers ──────────────────────────────────────────────────────────
 addStudentBtn.addEventListener("click", () => {
   openStudentModal();
@@ -389,6 +771,41 @@ studentModalBackdrop.addEventListener("click", function (e) {
   if (e.target === studentModalBackdrop) {
     closeModal();
   }
+});
+
+// Teacher Actions
+addTeacherBtn.addEventListener("click", () => {
+  openTeacherModal();
+});
+
+teacherModalCloseBtn.addEventListener("click", closeTeacherModal);
+teacherModalCancelBtn.addEventListener("click", closeTeacherModal);
+
+teacherModalBackdrop.addEventListener("click", function (e) {
+  if (e.target === teacherModalBackdrop) {
+    closeTeacherModal();
+  }
+});
+
+// Tab Switches
+tabStudents.addEventListener("click", () => {
+  if (activeTab === "students") return;
+  activeTab = "students";
+  tabStudents.classList.add("tab-btn--active");
+  tabTeachers.classList.remove("tab-btn--active");
+  studentsTabContent.style.display = "block";
+  teachersTabContent.style.display = "none";
+  loadStudents();
+});
+
+tabTeachers.addEventListener("click", () => {
+  if (activeTab === "teachers") return;
+  activeTab = "teachers";
+  tabTeachers.classList.add("tab-btn--active");
+  tabStudents.classList.remove("tab-btn--active");
+  teachersTabContent.style.display = "block";
+  studentsTabContent.style.display = "none";
+  loadTeachers();
 });
 
 logoutBtn.addEventListener("click", () => {
