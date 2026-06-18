@@ -21,8 +21,13 @@ const {
   AdminCreateUserCommand, 
   AdminSetUserPasswordCommand, 
   AdminDeleteUserCommand, 
-  AdminUpdateUserAttributesCommand 
+  AdminUpdateUserAttributesCommand,
+  AdminAddUserToGroupCommand,
+  ListUsersInGroupCommand,
+  AdminDisableUserCommand,
+  AdminEnableUserCommand
 } = require("@aws-sdk/client-cognito-identity-provider");
+
 
 const app = express();
 app.use(express.json());
@@ -170,6 +175,60 @@ const authMiddleware = async (req, res, next) => {
   try {
     const payload = await jwtVerifier.verify(token);
     req.user = payload; // Attach decoded JWT payload to the request
+    next();
+  } catch (error) {
+    console.error("JWT Verification failed:", error.message);
+    return res.status(401).json({ error: "Unauthorized: Invalid or expired token" });
+  }
+};
+
+/**
+ * Helper utility function to dynamically add a registered user to a specified Cognito group.
+ */
+async function addUserToCognitoGroup(username, groupName) {
+  const userPoolId = process.env.COGNITO_USER_POOL_ID;
+  if (!userPoolId) {
+    console.warn("Cognito Client: COGNITO_USER_POOL_ID not set. Skipping group assignment.");
+    return;
+  }
+
+  try {
+    await cognitoClient.send(new AdminAddUserToGroupCommand({
+      UserPoolId: userPoolId,
+      Username: username,
+      GroupName: groupName
+    }));
+    console.log(`Successfully added user ${username} to Cognito group: ${groupName}`);
+  } catch (error) {
+    console.error(`Failed to add user ${username} to Cognito group ${groupName}:`, error.message);
+    throw error;
+  }
+}
+
+/**
+ * ExpressJS gatekeeper middleware function.
+ * Decodes the incoming Cognito JWT token and verifies if the user belongs to 'teachers' or 'admins' group.
+ */
+const gatekeeperMiddleware = async (req, res, next) => {
+  if (!jwtVerifier) {
+    return res.status(500).json({ error: "Authentication system is not configured on the server" });
+  }
+
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Unauthorized: Missing or invalid Authorization header" });
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  try {
+    const payload = await jwtVerifier.verify(token);
+    req.user = payload; // Attach decoded JWT payload to the request
+
+    const groups = payload["cognito:groups"] || [];
+    if (!groups.includes("teachers") && !groups.includes("admins")) {
+      return res.status(403).json({ error: "Forbidden: Access restricted to teachers or administrators only" });
+    }
     next();
   } catch (error) {
     console.error("JWT Verification failed:", error.message);
@@ -528,6 +587,216 @@ app.post("/api/admin/release-results", authMiddleware, adminMiddleware, async (r
 });
 
 /**
+ * ROUTE 7a: GET /admin/teachers
+ * Protected route for admins to list all teachers.
+ */
+app.get("/api/admin/teachers", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const db = await getDbPool();
+    const [rows] = await db.query(
+      "SELECT id, username, full_name, email, phone, subject, enabled FROM teachers ORDER BY id DESC"
+    );
+    return res.status(200).json(rows);
+  } catch (error) {
+    console.error("Error retrieving teacher list for admin:", error.message);
+    return res.status(500).json({ error: "Failed to fetch teacher list from database" });
+  }
+});
+
+/**
+ * ROUTE 7b: POST /admin/teachers
+ * Protected route for admins to create a teacher.
+ * Body: { username, full_name, email, phone, subject }
+ */
+app.post("/api/admin/teachers", authMiddleware, adminMiddleware, async (req, res) => {
+  const { username, full_name, email, phone, subject } = req.body;
+  if (!username || !full_name || !email || !phone || !subject) {
+    return res.status(400).json({ error: "Missing required parameters: username, full_name, email, phone, and subject are required" });
+  }
+
+  const cleanUsername = username.trim();
+  const cleanName = full_name.trim();
+  const cleanEmail = email.trim();
+  const cleanPhone = phone.trim();
+  const cleanSubject = subject.trim();
+
+  try {
+    const db = await getDbPool();
+
+    // 1. Insert teacher into database first
+    await db.query(
+      "INSERT INTO teachers (username, full_name, email, phone, subject) VALUES (?, ?, ?, ?, ?)",
+      [cleanUsername, cleanName, cleanEmail, cleanPhone, cleanSubject]
+    );
+
+    // 2. Create Cognito user profile for the teacher
+    const userPoolId = process.env.COGNITO_USER_POOL_ID;
+    if (userPoolId) {
+      try {
+        await cognitoClient.send(new AdminCreateUserCommand({
+          UserPoolId: userPoolId,
+          Username: cleanUsername,
+          UserAttributes: [
+            { Name: "email", Value: cleanEmail },
+            { Name: "email_verified", Value: "true" },
+            { Name: "phone_number", Value: cleanPhone },
+            { Name: "phone_number_verified", Value: "true" },
+            { Name: "name", Value: cleanName }
+          ],
+          MessageAction: "SUPPRESS"
+        }));
+
+        // Set permanent password Massar2024!
+        await cognitoClient.send(new AdminSetUserPasswordCommand({
+          UserPoolId: userPoolId,
+          Username: cleanUsername,
+          Password: "Massar2024!",
+          Permanent: true
+        }));
+
+        // Add user to the teachers group
+        await addUserToCognitoGroup(cleanUsername, "teachers");
+      } catch (cognitoError) {
+        console.error(`Cognito registration failed for teacher ${cleanUsername}. Rolling back DB insertion...`, cognitoError.message);
+        // Rollback DB
+        await db.query("DELETE FROM teachers WHERE username = ?", [cleanUsername]);
+        return res.status(500).json({ error: `Cognito User Pool registration failed: ${cognitoError.message}` });
+      }
+    } else {
+      console.warn("Warning: COGNITO_USER_POOL_ID is not defined. Skipping Cognito teacher registration.");
+    }
+
+    return res.status(201).json({
+      message: "Teacher successfully created",
+      teacher: {
+        username: cleanUsername,
+        full_name: cleanName,
+        email: cleanEmail,
+        phone: cleanPhone,
+        subject: cleanSubject
+      }
+    });
+  } catch (error) {
+    console.error("Database error during teacher creation:", error.message);
+    return res.status(500).json({ error: `Failed to create teacher: ${error.message}` });
+  }
+});
+
+/**
+ * ROUTE 7c: PUT /admin/teachers/:username
+ * Protected route for admins to update teacher profile.
+ * Body: { full_name, email, phone, subject }
+ */
+app.put("/api/admin/teachers/:username", authMiddleware, adminMiddleware, async (req, res) => {
+  const username = req.params.username;
+  const { full_name, email, phone, subject } = req.body;
+
+  if (!full_name || !email || !phone || !subject) {
+    return res.status(400).json({ error: "Missing required parameters: full_name, email, phone, and subject are required" });
+  }
+
+  const cleanName = full_name.trim();
+  const cleanEmail = email.trim();
+  const cleanPhone = phone.trim();
+  const cleanSubject = subject.trim();
+
+  try {
+    const db = await getDbPool();
+
+    // Check if teacher exists
+    const [teachers] = await db.query(
+      "SELECT id FROM teachers WHERE username = ?",
+      [username]
+    );
+
+    if (teachers.length === 0) {
+      return res.status(404).json({ error: `Teacher with username ${username} not found` });
+    }
+
+    // Update in MySQL
+    await db.query(
+      "UPDATE teachers SET full_name = ?, email = ?, phone = ?, subject = ? WHERE username = ?",
+      [cleanName, cleanEmail, cleanPhone, cleanSubject, username]
+    );
+
+    // Update attributes in Cognito User Pool
+    const userPoolId = process.env.COGNITO_USER_POOL_ID;
+    if (userPoolId) {
+      try {
+        await cognitoClient.send(new AdminUpdateUserAttributesCommand({
+          UserPoolId: userPoolId,
+          Username: username,
+          UserAttributes: [
+            { Name: "email", Value: cleanEmail },
+            { Name: "email_verified", Value: "true" },
+            { Name: "phone_number", Value: cleanPhone },
+            { Name: "phone_number_verified", Value: "true" },
+            { Name: "name", Value: cleanName }
+          ]
+        }));
+        console.log(`Successfully updated attributes for Cognito teacher: ${username}`);
+      } catch (cognitoError) {
+        console.warn(`Failed to update attributes for Cognito teacher ${username} (might not exist in pool):`, cognitoError.message);
+      }
+    }
+
+    return res.status(200).json({
+      message: "Teacher profile updated successfully",
+      teacher: {
+        username,
+        full_name: cleanName,
+        email: cleanEmail,
+        phone: cleanPhone,
+        subject: cleanSubject
+      }
+    });
+  } catch (error) {
+    console.error(`Error updating teacher profile for ${username}:`, error.message);
+    return res.status(500).json({ error: `Failed to update teacher: ${error.message}` });
+  }
+});
+
+/**
+ * ROUTE 7d: DELETE /admin/teachers/:username
+ * Protected route for admins to delete teacher.
+ */
+app.delete("/api/admin/teachers/:username", authMiddleware, adminMiddleware, async (req, res) => {
+  const username = req.params.username;
+
+  try {
+    const db = await getDbPool();
+
+    // Delete from MySQL database
+    await db.query(
+      "DELETE FROM teachers WHERE username = ?",
+      [username]
+    );
+
+    // Delete user from Cognito User Pool
+    const userPoolId = process.env.COGNITO_USER_POOL_ID;
+    if (userPoolId) {
+      try {
+        await cognitoClient.send(new AdminDeleteUserCommand({
+          UserPoolId: userPoolId,
+          Username: username
+        }));
+        console.log(`Successfully deleted Cognito user: ${username}`);
+      } catch (cognitoError) {
+        console.warn(`Failed to delete Cognito teacher ${username} (might not exist in pool):`, cognitoError.message);
+      }
+    }
+
+    return res.status(200).json({
+      message: "Teacher deleted successfully",
+      username
+    });
+  } catch (error) {
+    console.error(`Error deleting teacher ${username}:`, error.message);
+    return res.status(500).json({ error: `Failed to delete teacher: ${error.message}` });
+  }
+});
+
+/**
  * ROUTE 7: GET /admin/students
  * Protected route for admins to list all students.
  */
@@ -535,7 +804,7 @@ app.get("/api/admin/students", authMiddleware, adminMiddleware, async (req, res)
   try {
     const db = await getDbPool();
     const [rows] = await db.query(
-      "SELECT id, code_massar, full_name, email, phone, result FROM students ORDER BY id DESC"
+      "SELECT id, code_massar, full_name, email, phone, result, enabled FROM students ORDER BY id DESC"
     );
     return res.status(200).json(rows);
   } catch (error) {
@@ -813,6 +1082,147 @@ app.delete("/api/admin/students/:id", authMiddleware, adminMiddleware, async (re
 });
 
 /**
+ * ROUTE 11: PUT /admin/students/:id/status
+ * Protected route for admins to enable/disable student Cognito account.
+ * Body: { enabled } (boolean)
+ */
+app.put("/api/admin/students/:id/status", authMiddleware, adminMiddleware, async (req, res) => {
+  const studentId = parseInt(req.params.id, 10);
+  const { enabled } = req.body;
+
+  if (isNaN(studentId)) {
+    return res.status(400).json({ error: "Invalid student ID parameter" });
+  }
+  if (typeof enabled === "undefined") {
+    return res.status(400).json({ error: "Missing required parameter: enabled status is required" });
+  }
+
+  const targetStatus = !!enabled;
+
+  try {
+    const db = await getDbPool();
+
+    // 1. Get student's code_massar
+    const [students] = await db.query(
+      "SELECT code_massar FROM students WHERE id = ?",
+      [studentId]
+    );
+
+    if (students.length === 0) {
+      return res.status(404).json({ error: `Student with ID ${studentId} not found` });
+    }
+
+    const code_massar = students[0].code_massar;
+
+    // 2. Update database status
+    await db.query(
+      "UPDATE students SET enabled = ? WHERE id = ?",
+      [targetStatus ? 1 : 0, studentId]
+    );
+
+    // 3. Update Cognito enabled state
+    const userPoolId = process.env.COGNITO_USER_POOL_ID;
+    if (userPoolId) {
+      try {
+        if (targetStatus) {
+          await cognitoClient.send(new AdminEnableUserCommand({
+            UserPoolId: userPoolId,
+            Username: code_massar
+          }));
+        } else {
+          await cognitoClient.send(new AdminDisableUserCommand({
+            UserPoolId: userPoolId,
+            Username: code_massar
+          }));
+        }
+        console.log(`Successfully toggled Cognito status to enabled=${targetStatus} for user ${code_massar}`);
+      } catch (cognitoError) {
+        console.warn(`Failed to update Cognito status for user ${code_massar}:`, cognitoError.message);
+      }
+    }
+
+    return res.status(200).json({
+      message: `Student account successfully ${targetStatus ? "enabled" : "disabled"}`,
+      student_id: studentId,
+      code_massar,
+      enabled: targetStatus
+    });
+  } catch (error) {
+    console.error(`Error toggling status for student ID ${studentId}:`, error.message);
+    return res.status(500).json({ error: "Failed to update student status in database" });
+  }
+});
+
+/**
+ * ROUTE 12: PUT /admin/teachers/:username/status
+ * Protected route for admins to enable/disable teacher Cognito account.
+ * Body: { enabled } (boolean)
+ */
+app.put("/api/admin/teachers/:username/status", authMiddleware, adminMiddleware, async (req, res) => {
+  const username = req.params.username;
+  const { enabled } = req.body;
+
+  if (!username) {
+    return res.status(400).json({ error: "Missing username parameter" });
+  }
+  if (typeof enabled === "undefined") {
+    return res.status(400).json({ error: "Missing required parameter: enabled status is required" });
+  }
+
+  const targetStatus = !!enabled;
+
+  try {
+    const db = await getDbPool();
+
+    // 1. Check if teacher exists
+    const [teachers] = await db.query(
+      "SELECT id FROM teachers WHERE username = ?",
+      [username]
+    );
+
+    if (teachers.length === 0) {
+      return res.status(404).json({ error: `Teacher with username ${username} not found` });
+    }
+
+    // 2. Update database status
+    await db.query(
+      "UPDATE teachers SET enabled = ? WHERE username = ?",
+      [targetStatus ? 1 : 0, username]
+    );
+
+    // 3. Update Cognito enabled state
+    const userPoolId = process.env.COGNITO_USER_POOL_ID;
+    if (userPoolId) {
+      try {
+        if (targetStatus) {
+          await cognitoClient.send(new AdminEnableUserCommand({
+            UserPoolId: userPoolId,
+            Username: username
+          }));
+        } else {
+          await cognitoClient.send(new AdminDisableUserCommand({
+            UserPoolId: userPoolId,
+            Username: username
+          }));
+        }
+        console.log(`Successfully toggled Cognito status to enabled=${targetStatus} for teacher ${username}`);
+      } catch (cognitoError) {
+        console.warn(`Failed to update Cognito status for teacher ${username}:`, cognitoError.message);
+      }
+    }
+
+    return res.status(200).json({
+      message: `Teacher account successfully ${targetStatus ? "enabled" : "disabled"}`,
+      username,
+      enabled: targetStatus
+    });
+  } catch (error) {
+    console.error(`Error toggling status for teacher ${username}:`, error.message);
+    return res.status(500).json({ error: "Failed to update teacher status in database" });
+  }
+});
+
+/**
  * Automatically synchronizes any existing students in the database to Cognito.
  * Runs once at startup to ensure the seeded mock students are ready to log in.
  */
@@ -879,6 +1289,76 @@ async function syncExistingUsersToCognito() {
   }
 }
 
+/**
+ * Automatically synchronizes any existing teachers in the database to Cognito.
+ * Runs once at startup to ensure the seeded mock teachers are ready to log in.
+ */
+async function syncExistingTeachersToCognito() {
+  const userPoolId = process.env.COGNITO_USER_POOL_ID;
+  if (!userPoolId) {
+    console.warn("Skipping Cognito teacher sync: COGNITO_USER_POOL_ID is not defined.");
+    return;
+  }
+
+  try {
+    const db = await getDbPool();
+    const [teachers] = await db.query("SELECT username, full_name, email, phone, subject FROM teachers");
+    console.log(`Checking/syncing ${teachers.length} teachers to Cognito User Pool...`);
+
+    for (const teacher of teachers) {
+      const { username, full_name, email, phone } = teacher;
+      try {
+        // Create user in Cognito (SUPPRESS makes sure no verification email is sent)
+        await cognitoClient.send(new AdminCreateUserCommand({
+          UserPoolId: userPoolId,
+          Username: username,
+          UserAttributes: [
+            { Name: "email", Value: email },
+            { Name: "email_verified", Value: "true" },
+            { Name: "phone_number", Value: phone },
+            { Name: "phone_number_verified", Value: "true" },
+            { Name: "name", Value: full_name }
+          ],
+          MessageAction: "SUPPRESS"
+        }));
+
+        // Set a fixed permanent password that satisfies Cognito policy requirements
+        await cognitoClient.send(new AdminSetUserPasswordCommand({
+          UserPoolId: userPoolId,
+          Username: username,
+          Password: "Massar2024!",
+          Permanent: true
+        }));
+
+        // Add user to the teachers group
+        await addUserToCognitoGroup(username, "teachers");
+        console.log(`Auto-seeded teacher ${username} to Cognito User Pool.`);
+      } catch (err) {
+        if (err.name === "UsernameExistsException") {
+          // If the user already exists, ensure they have the correct permanent password and group
+          try {
+            await cognitoClient.send(new AdminSetUserPasswordCommand({
+              UserPoolId: userPoolId,
+              Username: username,
+              Password: "Massar2024!",
+              Permanent: true
+            }));
+            await addUserToCognitoGroup(username, "teachers");
+            console.log(`Successfully reset/confirmed password and group for existing Cognito teacher: ${username}`);
+          } catch (setPassErr) {
+            console.warn(`Failed to set password for existing teacher ${username}:`, setPassErr.message);
+          }
+          continue;
+        }
+        console.warn(`Failed to seed teacher ${username} to Cognito:`, err.message);
+      }
+    }
+  } catch (error) {
+    console.error("Failed to sync existing teachers to Cognito:", error.message);
+    throw error;
+  }
+}
+
 // Asynchronous startup initialization function
 async function startupInitialization() {
   console.log("App booting. Initiating background AWS service connections...");
@@ -891,7 +1371,8 @@ async function startupInitialization() {
     try {
       await getDbPool();
       await syncExistingUsersToCognito();
-      console.log("Existing users synchronization completed successfully.");
+      await syncExistingTeachersToCognito();
+      console.log("Existing users and teachers synchronization completed successfully.");
       break; // Success, exit retry loop
     } catch (error) {
       console.warn(`Cognito user synchronization attempt ${attempt}/${maxRetries} failed:`, error.message);
