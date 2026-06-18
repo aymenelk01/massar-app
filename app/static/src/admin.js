@@ -10,6 +10,7 @@ const loadingState      = document.getElementById("loading-state");
 const studentsCard      = document.getElementById("students-card");
 const studentsTbody     = document.getElementById("students-tbody");
 const teachersCard      = document.getElementById("teachers-card");
+const teachersTbody     = document.getElementById("teachers-tbody");
 const successAlert      = document.getElementById("success-alert");
 const successAlertText  = document.getElementById("success-alert-text");
 const errorAlert        = document.getElementById("error-alert");
@@ -194,7 +195,6 @@ function renderStudentsTable() {
     const accountLabel = isEnabled ? "Active" : "Suspended";
     const accountClass = isEnabled ? "badge-status--admis" : "badge-status--ajourne";
     const toggleButtonLabel = isEnabled ? "Disable" : "Enable";
-    const toggleButtonClass = isEnabled ? "toggle-student-status-action" : "toggle-student-status-action";
     const toggleButtonStyle = isEnabled ? "color: var(--red-600); border-color: #f5c6c2;" : "color: var(--green-700); border-color: #a3d9b1;";
 
     const row = document.createElement("tr");
@@ -211,7 +211,7 @@ function renderStudentsTable() {
       </td>
       <td style="text-align: center; display: flex; gap: 8px; justify-content: center;">
         <button class="btn btn--ghost btn--sm edit-student-action" type="button">Edit</button>
-        <button class="btn btn--ghost btn--sm ${toggleButtonClass}" type="button" style="${toggleButtonStyle}">${toggleButtonLabel}</button>
+        <button class="btn btn--ghost btn--sm toggle-student-status-action" type="button" style="${toggleButtonStyle}">${toggleButtonLabel}</button>
         <button class="btn btn--ghost btn--sm btn--danger delete-student-action" type="button" style="color: var(--red-600); border-color: #f5c6c2;">Delete</button>
       </td>
     `;
@@ -517,7 +517,6 @@ function renderTeachersTable() {
     const accountLabel = isEnabled ? "Active" : "Suspended";
     const accountClass = isEnabled ? "badge-status--admis" : "badge-status--ajourne";
     const toggleButtonLabel = isEnabled ? "Disable" : "Enable";
-    const toggleButtonClass = isEnabled ? "toggle-teacher-status-action" : "toggle-teacher-status-action";
     const toggleButtonStyle = isEnabled ? "color: var(--red-600); border-color: #f5c6c2;" : "color: var(--green-700); border-color: #a3d9b1;";
 
     const row = document.createElement("tr");
@@ -532,7 +531,7 @@ function renderTeachersTable() {
       </td>
       <td style="text-align: center; display: flex; gap: 8px; justify-content: center;">
         <button class="btn btn--ghost btn--sm edit-teacher-action" type="button">Edit</button>
-        <button class="btn btn--ghost btn--sm ${toggleButtonClass}" type="button" style="${toggleButtonStyle}">${toggleButtonLabel}</button>
+        <button class="btn btn--ghost btn--sm toggle-teacher-status-action" type="button" style="${toggleButtonStyle}">${toggleButtonLabel}</button>
         <button class="btn btn--ghost btn--sm btn--danger delete-teacher-action" type="button" style="color: var(--red-600); border-color: #f5c6c2;">Delete</button>
       </td>
     `;

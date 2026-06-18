@@ -316,7 +316,7 @@ editGradeForm.addEventListener("submit", async function (e) {
       });
 
       await Promise.all(updatePromises);
-      showSuccess(`Successfully updated grades for student Yassine ${currentStudent.full_name}.`);
+      showSuccess(`Successfully updated grades for ${currentStudent.full_name}.`);
       closeModal();
       await loadStudents(); // Reload main table
     } catch (err) {
