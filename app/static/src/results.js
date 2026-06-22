@@ -19,6 +19,8 @@ const resultLabel  = document.getElementById("result-label");
 const subjectsTbody = document.getElementById("subjects-tbody");
 const averageGrade = document.getElementById("average-grade");
 const logoutBtn    = document.getElementById("logout-btn");
+const downloadDiplomaBtn = document.getElementById("download-diploma-btn");
+const diplomaStatusText  = document.getElementById("diploma-status-text");
 
 // ── Auth Guard: check token presence ──────────────────────────
 const token = sessionStorage.getItem("access_token");
@@ -79,9 +81,17 @@ async function loadResults() {
       if (outcome === "Admis") {
         resultLabel.textContent = "Admitted";
         resultBadge.className = "result-badge result-badge--pass";
+        if (downloadDiplomaBtn) {
+          downloadDiplomaBtn.disabled = false;
+          diplomaStatusText.textContent = "";
+        }
       } else {
         resultLabel.textContent = "Deferred";
         resultBadge.className = "result-badge result-badge--fail";
+        if (downloadDiplomaBtn) {
+          downloadDiplomaBtn.disabled = true;
+          diplomaStatusText.textContent = "Diplomas are only available for admitted students.";
+        }
       }
 
       // 2. Clear subjects body
@@ -150,6 +160,48 @@ function showError(message) {
 logoutBtn.addEventListener("click", () => {
   handleSessionExpiry();
 });
+
+if (downloadDiplomaBtn) {
+  downloadDiplomaBtn.addEventListener("click", async () => {
+    downloadDiplomaBtn.disabled = true;
+    diplomaStatusText.style.color = "var(--neutral-600)";
+    diplomaStatusText.textContent = "Requesting download link...";
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/student/diploma`, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
+
+      if (response.status === 401 || response.status === 403) {
+        handleSessionExpiry();
+        return;
+      }
+
+      const data = await response.json();
+
+      if (response.ok) {
+        diplomaStatusText.style.color = "var(--green-700)";
+        diplomaStatusText.textContent = "Download started.";
+        window.open(data.downloadUrl, "_blank");
+      } else if (response.status === 404) {
+        diplomaStatusText.style.color = "var(--neutral-600)";
+        diplomaStatusText.textContent = "Your diploma is currently being generated. Please check back in a few minutes.";
+      } else {
+        diplomaStatusText.style.color = "var(--red-600)";
+        diplomaStatusText.textContent = data.error || "Failed to download diploma.";
+      }
+    } catch (err) {
+      console.error("Error downloading diploma:", err);
+      diplomaStatusText.style.color = "var(--red-600)";
+      diplomaStatusText.textContent = "Could not connect to the server.";
+    } finally {
+      downloadDiplomaBtn.disabled = false;
+    }
+  });
+}
 
 // Run load on start
 loadResults();
