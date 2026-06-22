@@ -23,9 +23,10 @@ const studentsTabContent = document.getElementById("students-tab-content");
 const teachersTabContent = document.getElementById("teachers-tab-content");
 
 // Actions references
-const addStudentBtn     = document.getElementById("add-student-btn");
-const releaseResultsBtn = document.getElementById("release-results-btn");
-const addTeacherBtn     = document.getElementById("add-teacher-btn");
+const addStudentBtn       = document.getElementById("add-student-btn");
+const releaseResultsBtn   = document.getElementById("release-results-btn");
+const generateDiplomasBtn = document.getElementById("generate-diplomas-btn");
+const addTeacherBtn       = document.getElementById("add-teacher-btn");
 
 // Student Modal references
 const studentModalBackdrop = document.getElementById("student-modal-backdrop");
@@ -514,6 +515,53 @@ async function triggerReleaseResults() {
   }
 }
 
+async function triggerGenerateDiplomas() {
+  const confirmed = await showConfirm(
+    "Generate Baccalaureate Diplomas",
+    "Are you sure you want to generate diplomas for all admitted students? This will queue generation tasks on SQS to render PDFs and upload them to S3.",
+    { confirmLabel: "Generate Diplomas", danger: false }
+  );
+  if (!confirmed) return;
+
+  hideAlerts();
+  if (generateDiplomasBtn) generateDiplomasBtn.disabled = true;
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/admin/generate-diplomas`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({})
+    });
+
+    if (response.status === 401 || response.status === 403) {
+      handleSessionExpiry();
+      return;
+    }
+
+    let data = {};
+    try {
+      data = await response.json();
+    } catch (_) {
+      // Ignore
+    }
+
+    if (response.ok) {
+      const count = typeof data.count !== "undefined" ? data.count : 0;
+      showSuccess(`Successfully queued diploma generation for ${count} admitted students on the SQS queue.`);
+    } else {
+      showError(data.error || "Failed to trigger diploma generation.");
+    }
+  } catch (err) {
+    console.error("Error generating diplomas:", err);
+    showError("Could not connect to the server to generate diplomas.");
+  } finally {
+    if (generateDiplomasBtn) generateDiplomasBtn.disabled = false;
+  }
+}
+
 // ── Fetch and Render Teachers ──────────────────────────────────────────────
 async function loadTeachers() {
   try {
@@ -825,6 +873,12 @@ addStudentBtn.addEventListener("click", () => {
 releaseResultsBtn.addEventListener("click", () => {
   triggerReleaseResults();
 });
+
+if (generateDiplomasBtn) {
+  generateDiplomasBtn.addEventListener("click", () => {
+    triggerGenerateDiplomas();
+  });
+}
 
 modalCloseBtn.addEventListener("click", closeModal);
 modalCancelBtn.addEventListener("click", closeModal);
