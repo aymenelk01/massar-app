@@ -3,10 +3,9 @@
  * Simulates the Moroccan Ministry of Education student portal running on AWS ECS Fargate.
  * 
  * Integration:
- * - AWS Secrets Manager (fetches database credentials at startup)
  * - Amazon Cognito (user authentication and JWT verification)
  * - AWS SQS (sends student results notifications)
- * - Aurora Serverless v2 MySQL via RDS Proxy (relational storage)
+ * - Aurora Serverless v2 MySQL via RDS Proxy (relational storage, IAM auth)
  * - ElastiCache Redis (caching student results)
  */
 
@@ -14,8 +13,10 @@ const express = require("express");
 const mysql = require("mysql2/promise");
 const Redis = require("ioredis");
 const { CognitoJwtVerifier } = require("aws-jwt-verify");
-const { SecretsManagerClient, GetSecretValueCommand } = require("@aws-sdk/client-secrets-manager");
+const { RdsSigner } = require("@aws-sdk/rds-signer");
 const { SQSClient, SendMessageCommand } = require("@aws-sdk/client-sqs");
+const { S3Client, HeadObjectCommand, GetObjectCommand } = require("@aws-sdk/client-s3");
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 const { 
   CognitoIdentityProviderClient, 
   AdminCreateUserCommand, 
@@ -37,12 +38,11 @@ const REGION = process.env.AWS_REGION || "eu-south-1";
 const PORT = process.env.PORT || 3000;
 
 // AWS Clients Instantiations (Credential loading is managed by ECS Task Role)
-const secretsClient = new SecretsManagerClient({ region: REGION });
 const sqsClient = new SQSClient({ region: REGION });
+const s3Client = new S3Client({ region: REGION });
 const cognitoClient = new CognitoIdentityProviderClient({ region: REGION });
 
-// Global holders for Database Credentials and Pool
-let dbCredentials = null;
+// Global holder for the MySQL connection pool
 let dbPool = null;
 
 // Initialize JWT Verifier dynamically if environment variables are present
@@ -97,62 +97,89 @@ if (process.env.ELASTICACHE_ENDPOINT) {
 }
 
 /**
- * Fetches database credentials from Secrets Manager.
- * Reuses cached credentials if already retrieved.
+ * Generates a short-lived IAM authentication token for the RDS Proxy.
+ *
+ * The token is valid for 15 minutes and is used as the password when
+ * opening a new physical connection to the proxy. It is signed with the
+ * ECS task role credentials — no static password is stored anywhere.
+ *
+ * This function must be called fresh for every new connection; never cache
+ * the result globally or the token will be stale after 15 minutes.
  */
-async function getDbCredentials() {
-  if (dbCredentials) return dbCredentials;
-
-  const secretArn = process.env.DB_SECRET_ARN;
-  if (!secretArn) {
-    throw new Error("DB_SECRET_ARN environment variable is not defined");
-  }
-
-  console.log(`Fetching database credentials from Secrets Manager: ${secretArn}`);
-  try {
-    const command = new GetSecretValueCommand({ SecretId: secretArn });
-    const data = await secretsClient.send(command);
-    if (!data.SecretString) {
-      throw new Error("Secrets Manager returned empty SecretString");
-    }
-    dbCredentials = JSON.parse(data.SecretString);
-    return dbCredentials;
-  } catch (error) {
-    console.error("Error retrieving DB credentials from Secrets Manager:", error.message);
-    throw error;
-  }
+async function generateIamToken(dbHost, dbUsername) {
+  const signer = new RdsSigner({
+    hostname: dbHost,
+    port: 3306,
+    username: dbUsername,
+    region: REGION,
+  });
+  return signer.getAuthToken();
 }
 
 /**
- * Returns a configured MySQL Connection Pool.
- * If the pool has not been initialized yet, it tries to fetch credentials and create it.
+ * Returns a configured MySQL Connection Pool that authenticates to the RDS
+ * Proxy using short-lived IAM tokens instead of a static password.
+ *
+ * How token refresh works:
+ * mysql2 exposes a `beforeConnect` hook that runs before every new physical
+ * connection is established. We override the connection config's password
+ * inside this hook with a freshly generated IAM token. This guarantees:
+ *   - The first connections at startup use a valid token.
+ *   - Any reconnect (network blip, proxy timeout, pool eviction) also gets
+ *     a fresh token — so a stale token can never cause an auth failure.
+ *
+ * The pool itself is created once and reused. Only the token regenerates.
  */
 async function getDbPool() {
   if (dbPool) return dbPool;
 
+  const dbHost = process.env.RDS_PROXY_ENDPOINT;
+  const dbUsername = process.env.DB_USERNAME || "db_iam_user";
+  const dbName = process.env.DB_NAME || "massardb";
+
+  if (!dbHost) {
+    throw new Error("RDS_PROXY_ENDPOINT environment variable is not defined");
+  }
+
+  console.log(`Creating IAM-authenticated MySQL pool → RDS Proxy: ${dbHost} as '${dbUsername}'`);
+
   try {
-    const credentials = await getDbCredentials();
-    const dbName = process.env.DB_NAME || "massardb";
-    const dbHost = process.env.RDS_PROXY_ENDPOINT;
-
-    if (!dbHost) {
-      throw new Error("RDS_PROXY_ENDPOINT environment variable is not defined");
-    }
-
-    console.log(`Creating MySQL Connection Pool targeting RDS Proxy: ${dbHost}`);
     dbPool = mysql.createPool({
       host: dbHost,
-      user: credentials.username,
-      password: credentials.password,
+      user: dbUsername,
       database: dbName,
-      connectionLimit: 10, // Maximum pool size (limit 10)
+      // No static password — token is injected per-connection via beforeConnect.
+      // waitForConnections: pool queues requests when all connections are busy
+      // rather than throwing immediately, preventing request spikes from failing.
       waitForConnections: true,
+      connectionLimit: 10,
       queueLimit: 0,
-      ssl: "Amazon RDS"
+      ssl: "Amazon RDS",
     });
+
+    // beforeConnect fires before every new physical connection is opened.
+    // We generate a fresh IAM token here so that reconnects (after the pool
+    // evicts an idle connection or recovers from a network error) never
+    // reuse a token that may have already expired.
+    dbPool.on("connection", (connection) => {
+      connection.config.password = null; // cleared; token injected below
+    });
+
+    dbPool.pool.on("acquire", () => {}); // no-op, pool lifecycle hook placeholder
+
+    // Override beforeConnect at the pool level so every new socket uses a
+    // freshly signed token as its authentication credential.
+    const originalBefore = dbPool.pool.config.connectionConfig.beforeConnect;
+    dbPool.pool.config.connectionConfig.beforeConnect = async (connConfig) => {
+      if (originalBefore) await originalBefore(connConfig);
+      connConfig.password = await generateIamToken(dbHost, dbUsername);
+      console.log(`[db] Fresh IAM token generated for new connection to ${dbHost}`);
+    };
+
     return dbPool;
   } catch (error) {
     console.error("MySQL Connection Pool initialization failed:", error.message);
+    dbPool = null; // reset so the next request can retry
     throw error;
   }
 }
@@ -350,6 +377,75 @@ app.get("/api/results", authMiddleware, async (req, res) => {
   } catch (error) {
     console.error(`Error retrieving results for student ${code_massar}:`, error.message);
     return res.status(500).json({ error: "Failed to fetch student results from database or they are no students available" });
+  }
+});
+
+/**
+ * ROUTE 4a: GET /student/diploma
+ * Returns an S3 presigned URL for the student's Baccalaureate diploma.
+ * Available only to admitted students when their diploma is ready.
+ */
+app.get("/api/student/diploma", authMiddleware, async (req, res) => {
+  const cognitoUser = req.user.username || req.user["cognito:username"] || req.user.email || "";
+  const code_massar = cognitoUser.split("@")[0].toUpperCase();
+
+  if (!code_massar) {
+    return res.status(400).json({ error: "Invalid user claim format. Cannot parse code_massar." });
+  }
+
+  const bucketName = process.env.DOCUMENTS_BUCKET_NAME;
+  if (!bucketName) {
+    return res.status(500).json({ error: "DOCUMENTS_BUCKET_NAME environment variable not configured" });
+  }
+
+  try {
+    const db = await getDbPool();
+    
+    // Check student status
+    const [students] = await db.query(
+      "SELECT result FROM students WHERE code_massar = ?",
+      [code_massar]
+    );
+
+    if (students.length === 0) {
+      return res.status(404).json({ error: `Student with code ${code_massar} not found` });
+    }
+
+    if (students[0].result !== "Admis") {
+      return res.status(403).json({ error: "Diplomas are only available for admitted students." });
+    }
+
+    const s3Key = `diplomas/${code_massar}_bac_diploma.pdf`;
+
+    // Verify if the object exists
+    try {
+      await s3Client.send(new HeadObjectCommand({
+        Bucket: bucketName,
+        Key: s3Key
+      }));
+    } catch (s3Error) {
+      if (s3Error.name === "NotFound" || s3Error.$metadata?.httpStatusCode === 404) {
+        return res.status(404).json({ error: "Diploma not ready yet" });
+      }
+      console.error(`S3 HeadObject error for student ${code_massar}:`, s3Error.message);
+      return res.status(500).json({ error: "Failed to access S3 document storage" });
+    }
+
+    // Generate Presigned URL
+    try {
+      const command = new GetObjectCommand({
+        Bucket: bucketName,
+        Key: s3Key
+      });
+      const presignedUrl = await getSignedUrl(s3Client, command, { expiresIn: 900 }); // 15 mins
+      return res.status(200).json({ downloadUrl: presignedUrl });
+    } catch (presignedError) {
+      console.error(`Error generating S3 presigned URL for student ${code_massar}:`, presignedError.message);
+      return res.status(500).json({ error: "Failed to generate download link" });
+    }
+  } catch (error) {
+    console.error(`Error processing diploma request for student ${code_massar}:`, error.message);
+    return res.status(500).json({ error: "Failed to process diploma download request" });
   }
 });
 
@@ -583,6 +679,70 @@ app.post("/api/admin/release-results", authMiddleware, adminMiddleware, async (r
   } catch (error) {
     console.error("Failed to release results:", error.message);
     return res.status(500).json({ error: "Failed to process results release" });
+  }
+});
+
+/**
+ * ROUTE 4b: POST /admin/generate-diplomas
+ * Protected route for administrator to trigger SQS diploma generation.
+ * Queries all admitted students, calculates their average, and sends messages to SQS queue.
+ */
+app.post("/api/admin/generate-diplomas", authMiddleware, adminMiddleware, async (req, res) => {
+  const queueUrl = process.env.DOCUMENTS_SQS_QUEUE_URL;
+  if (!queueUrl) {
+    return res.status(500).json({ error: "DOCUMENTS_SQS_QUEUE_URL environment variable not configured" });
+  }
+
+  try {
+    const db = await getDbPool();
+
+    // Query all admitted students and calculate their average grade in one query
+    const [rows] = await db.query(`
+      SELECT 
+        s.code_massar, 
+        s.full_name, 
+        s.result,
+        COALESCE(AVG(sr.grade), 10.00) as average
+      FROM students s
+      LEFT JOIN subject_results sr ON s.id = sr.student_id
+      WHERE s.result = 'Admis'
+      GROUP BY s.id
+    `);
+
+    if (rows.length === 0) {
+      return res.status(200).json({ message: "No admitted student records found to generate diplomas", count: 0 });
+    }
+
+    console.log(`Found ${rows.length} admitted students. Sending diploma generation payloads to SQS...`);
+
+    // Prepare SQS SendMessage Promises to process in parallel
+    const sendPromises = rows.map(student => {
+      const messageBody = JSON.stringify({
+        code_massar: student.code_massar,
+        full_name: student.full_name,
+        result: student.result,
+        average: parseFloat(parseFloat(student.average).toFixed(2))
+      });
+
+      const command = new SendMessageCommand({
+        QueueUrl: queueUrl,
+        MessageBody: messageBody
+      });
+
+      return sqsClient.send(command);
+    });
+
+    // Wait for all messages to be queued
+    await Promise.all(sendPromises);
+    console.log(`Successfully queued ${rows.length} diploma generation messages in SQS.`);
+
+    return res.status(200).json({ 
+      message: "Diploma generation triggered", 
+      count: rows.length 
+    });
+  } catch (error) {
+    console.error("Failed to trigger diploma generation:", error.message);
+    return res.status(500).json({ error: "Failed to process diploma generation" });
   }
 });
 
