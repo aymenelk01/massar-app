@@ -8,8 +8,10 @@
   },
   "dependencies": {
     "@aws-sdk/client-cognito-identity-provider": "^3.577.0",
-    "@aws-sdk/client-secrets-manager": "^3.577.0",
+    "@aws-sdk/client-s3": "^3.577.0",
     "@aws-sdk/client-sqs": "^3.577.0",
+    "@aws-sdk/rds-signer": "^3.577.0",
+    "@aws-sdk/s3-request-presigner": "^3.577.0",
     "aws-jwt-verify": "^4.0.1",
     "express": "^4.19.2",
     "ioredis": "^5.4.1",
