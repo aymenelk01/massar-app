@@ -13,7 +13,7 @@ const express = require("express");
 const mysql = require("mysql2/promise");
 const Redis = require("ioredis");
 const { CognitoJwtVerifier } = require("aws-jwt-verify");
-const { RdsSigner } = require("@aws-sdk/rds-signer");
+const { Signer } = require("@aws-sdk/rds-signer");
 const { SQSClient, SendMessageCommand } = require("@aws-sdk/client-sqs");
 const { S3Client, HeadObjectCommand, GetObjectCommand } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
@@ -104,7 +104,7 @@ if (process.env.ELASTICACHE_ENDPOINT) {
  * ECS task role credentials — no static password is stored anywhere.
  */
 async function generateIamToken(dbHost, dbUsername) {
-  const signer = new RdsSigner({
+  const signer = new Signer({
     hostname: dbHost,
     port: 3306,
     username: dbUsername,
