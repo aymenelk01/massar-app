@@ -440,7 +440,12 @@ app.get("/api/student/diploma", authMiddleware, async (req, res) => {
         Key: s3Key
       }));
     } catch (s3Error) {
-      if (s3Error.name === "NotFound" || s3Error.$metadata?.httpStatusCode === 404) {
+      if (
+        s3Error.name === "NotFound" || 
+        s3Error.name === "AccessDenied" || 
+        s3Error.$metadata?.httpStatusCode === 404 || 
+        s3Error.$metadata?.httpStatusCode === 403
+      ) {
         return res.status(404).json({ error: "Diploma not ready yet" });
       }
       console.error(`S3 HeadObject error for student ${code_massar}:`, s3Error.message);
