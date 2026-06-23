@@ -155,6 +155,7 @@ async function getDbPool() {
       connectionLimit: 10,
       queueLimit: 0,
       ssl: "Amazon RDS",
+      enableCleartextPlugin: true,
     });
 
     // beforeConnect fires before every new physical connection is opened.
