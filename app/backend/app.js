@@ -1,5 +1,5 @@
 /**
- * Massar Mock Portal Application
+ * Massar Mock Portal Application (test)
  * Simulates the Moroccan Ministry of Education student portal running on AWS ECS Fargate.
  * 
  * Integration:
