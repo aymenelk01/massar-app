@@ -225,7 +225,7 @@ function renderStudentsTable() {
 
   if (studentsList.length === 0) {
     const row = document.createElement("tr");
-    row.innerHTML = `<td colspan="7" style="text-align: center; color: var(--neutral-600);">No student records found.</td>`;
+    row.innerHTML = `<td colspan="8" style="text-align: center; color: var(--neutral-600);">No student records found.</td>`;
     studentsTbody.appendChild(row);
     return;
   }
@@ -240,6 +240,12 @@ function renderStudentsTable() {
     const toggleButtonLabel = isEnabled ? "Disable" : "Enable";
     const toggleButtonStyle = isEnabled ? "color: var(--red-600); border-color: #f5c6c2;" : "color: var(--green-700); border-color: #a3d9b1;";
 
+    const diplomaBadge = student.result !== "Admis"
+      ? `<span style="color: var(--neutral-400);">—</span>`
+      : student.diploma_generated
+        ? `<span class="badge-status badge-status--admis">Generated ✓</span>`
+        : `<span class="badge-status badge-status--ajourne">Pending</span>`;
+
     const row = document.createElement("tr");
     row.innerHTML = `
       <td><strong>${student.code_massar || "—"}</strong></td>
@@ -248,6 +254,9 @@ function renderStudentsTable() {
       <td>${student.phone || "—"}</td>
       <td style="text-align: center;">
         <span class="badge-status ${statusClass}">${statusLabel}</span>
+      </td>
+      <td style="text-align: center;">
+        ${diplomaBadge}
       </td>
       <td style="text-align: center;">
         <span class="badge-status ${accountClass}">${accountLabel}</span>
@@ -549,8 +558,23 @@ async function triggerGenerateDiplomas() {
     }
 
     if (response.ok) {
-      const count = typeof data.count !== "undefined" ? data.count : 0;
-      showSuccess(`Successfully queued diploma generation for ${count} admitted students on the SQS queue.`);
+      const queued = typeof data.queued !== "undefined" ? data.queued : (typeof data.count !== "undefined" ? data.count : 0);
+      const skipped = typeof data.skipped !== "undefined" ? data.skipped : 0;
+
+      if (queued === 0) {
+        if (skipped > 0) {
+          showSuccess("All diplomas are already generated for admitted students.");
+        } else {
+          showSuccess(data.message || "No admitted student records found to generate diplomas.");
+        }
+      } else {
+        if (skipped > 0) {
+          showSuccess(`Successfully queued diploma generation for ${queued} admitted student(s). ${skipped} already generated and skipped.`);
+        } else {
+          showSuccess(`Successfully queued diploma generation for ${queued} admitted student(s) on the SQS queue.`);
+        }
+      }
+      await loadStudents();
     } else {
       showError(data.error || "Failed to trigger diploma generation.");
     }
