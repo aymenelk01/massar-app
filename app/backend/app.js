@@ -102,9 +102,6 @@ if (process.env.ELASTICACHE_ENDPOINT) {
  * The token is valid for 15 minutes and is used as the password when
  * opening a new physical connection to the proxy. It is signed with the
  * ECS task role credentials — no static password is stored anywhere.
- *
- * This function must be called fresh for every new connection; never cache
- * the result globally or the token will be stale after 15 minutes.
  */
 async function generateIamToken(dbHost, dbUsername) {
   const signer = new RdsSigner({
@@ -117,18 +114,39 @@ async function generateIamToken(dbHost, dbUsername) {
 }
 
 /**
- * Returns a configured MySQL Connection Pool that authenticates to the RDS
- * Proxy using short-lived IAM tokens instead of a static password.
+ * Creates a new mysql2 pool stamped with a freshly signed IAM token as
+ * the password. mysql2 does not support per-connection password hooks
+ * through any stable public API, so the correct pattern is to bake the
+ * token into the pool at creation time and recreate the pool before the
+ * token expires (IAM tokens are valid for 15 minutes).
  *
- * How token refresh works:
- * mysql2 exposes a `beforeConnect` hook that runs before every new physical
- * connection is established. We override the connection config's password
- * inside this hook with a freshly generated IAM token. This guarantees:
- *   - The first connections at startup use a valid token.
- *   - Any reconnect (network blip, proxy timeout, pool eviction) also gets
- *     a fresh token — so a stale token can never cause an auth failure.
- *
- * The pool itself is created once and reused. Only the token regenerates.
+ * Pool rotation (schedulePoolRotation below) replaces dbPool every 14
+ * minutes so in-flight queries always finish on the old pool while new
+ * connections automatically use the fresh token.
+ */
+async function createDbPool(dbHost, dbUsername, dbName) {
+  const token = await generateIamToken(dbHost, dbUsername);
+  console.log(`[db] IAM token generated for new pool → ${dbHost}`);
+
+  const pool = mysql.createPool({
+    host: dbHost,
+    user: dbUsername,
+    password: token,          // baked-in token; pool is rotated before it expires
+    database: dbName,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0,
+    ssl: "Amazon RDS",
+    enableCleartextPlugin: true,
+  });
+
+  return pool;
+}
+
+/**
+ * Returns the active MySQL connection pool, creating it on first call.
+ * Subsequent calls return the cached pool until it is rotated by
+ * schedulePoolRotation().
  */
 async function getDbPool() {
   if (dbPool) return dbPool;
@@ -144,45 +162,42 @@ async function getDbPool() {
   console.log(`Creating IAM-authenticated MySQL pool → RDS Proxy: ${dbHost} as '${dbUsername}'`);
 
   try {
-    dbPool = mysql.createPool({
-      host: dbHost,
-      user: dbUsername,
-      database: dbName,
-      // No static password — token is injected per-connection via beforeConnect.
-      // waitForConnections: pool queues requests when all connections are busy
-      // rather than throwing immediately, preventing request spikes from failing.
-      waitForConnections: true,
-      connectionLimit: 10,
-      queueLimit: 0,
-      ssl: "Amazon RDS",
-      enableCleartextPlugin: true,
-    });
-
-    // beforeConnect fires before every new physical connection is opened.
-    // We generate a fresh IAM token here so that reconnects (after the pool
-    // evicts an idle connection or recovers from a network error) never
-    // reuse a token that may have already expired.
-    dbPool.on("connection", (connection) => {
-      connection.config.password = null; // cleared; token injected below
-    });
-
-    dbPool.pool.on("acquire", () => {}); // no-op, pool lifecycle hook placeholder
-
-    // Override beforeConnect at the pool level so every new socket uses a
-    // freshly signed token as its authentication credential.
-    const originalBefore = dbPool.pool.config.connectionConfig.beforeConnect;
-    dbPool.pool.config.connectionConfig.beforeConnect = async (connConfig) => {
-      if (originalBefore) await originalBefore(connConfig);
-      connConfig.password = await generateIamToken(dbHost, dbUsername);
-      console.log(`[db] Fresh IAM token generated for new connection to ${dbHost}`);
-    };
-
+    dbPool = await createDbPool(dbHost, dbUsername, dbName);
+    schedulePoolRotation(dbHost, dbUsername, dbName);
     return dbPool;
   } catch (error) {
     console.error("MySQL Connection Pool initialization failed:", error.message);
-    dbPool = null; // reset so the next request can retry
+    dbPool = null;
     throw error;
   }
+}
+
+/**
+ * Rotates the pool every 14 minutes so the baked-in IAM token is always
+ * fresh (tokens expire after 15 minutes). The old pool is ended gracefully
+ * so any in-flight queries can drain before connections are closed.
+ */
+function schedulePoolRotation(dbHost, dbUsername, dbName) {
+  // 14 minutes — 1 minute before the 15-minute IAM token expiry
+  const ROTATION_INTERVAL_MS = 14 * 60 * 1000;
+
+  setTimeout(async () => {
+    try {
+      console.log("[db] Rotating MySQL pool with a fresh IAM token...");
+      const newPool = await createDbPool(dbHost, dbUsername, dbName);
+      const oldPool = dbPool;
+      dbPool = newPool;                // swap atomically; in-flight queries finish on oldPool
+      schedulePoolRotation(dbHost, dbUsername, dbName); // schedule next rotation
+      oldPool.end((err) => {
+        if (err) console.warn("[db] Warning while draining old pool:", err.message);
+        else console.log("[db] Old pool drained and closed.");
+      });
+    } catch (err) {
+      console.error("[db] Pool rotation failed, retrying in 60s:", err.message);
+      // Retry rotation in 60s without killing the existing (still valid) pool
+      setTimeout(() => schedulePoolRotation(dbHost, dbUsername, dbName), 60_000);
+    }
+  }, ROTATION_INTERVAL_MS);
 }
 
 /**
