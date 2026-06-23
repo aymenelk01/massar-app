@@ -705,8 +705,12 @@ app.post("/api/admin/release-results", authMiddleware, adminMiddleware, async (r
  */
 app.post("/api/admin/generate-diplomas", authMiddleware, adminMiddleware, async (req, res) => {
   const queueUrl = process.env.DOCUMENTS_SQS_QUEUE_URL;
+  const bucketName = process.env.DOCUMENTS_BUCKET_NAME;
   if (!queueUrl) {
     return res.status(500).json({ error: "DOCUMENTS_SQS_QUEUE_URL environment variable not configured" });
+  }
+  if (!bucketName) {
+    return res.status(500).json({ error: "DOCUMENTS_BUCKET_NAME environment variable not configured" });
   }
 
   try {
@@ -726,13 +730,44 @@ app.post("/api/admin/generate-diplomas", authMiddleware, adminMiddleware, async 
     `);
 
     if (rows.length === 0) {
-      return res.status(200).json({ message: "No admitted student records found to generate diplomas", count: 0 });
+      return res.status(200).json({ message: "No admitted student records found to generate diplomas", count: 0, queued: 0, skipped: 0 });
     }
 
-    console.log(`Found ${rows.length} admitted students. Sending diploma generation payloads to SQS...`);
+    console.log(`Found ${rows.length} admitted students. Checking S3 for existing diplomas...`);
+
+    // Check S3 for existing diplomas in parallel
+    const checks = await Promise.all(
+      rows.map(async (student) => {
+        try {
+          await s3Client.send(
+            new HeadObjectCommand({
+              Bucket: bucketName,
+              Key: `diplomas/${student.code_massar}_bac_diploma.pdf`
+            })
+          );
+          return { student, exists: true };
+        } catch (err) {
+          return { student, exists: false };
+        }
+      })
+    );
+
+    const toQueue = checks.filter(c => !c.exists).map(c => c.student);
+    const skippedCount = checks.filter(c => c.exists).length;
+
+    if (toQueue.length === 0) {
+      return res.status(200).json({
+        message: "All diplomas are already generated for admitted students.",
+        count: 0,
+        queued: 0,
+        skipped: skippedCount
+      });
+    }
+
+    console.log(`Queueing ${toQueue.length} diploma generation payloads to SQS (${skippedCount} skipped)...`);
 
     // Prepare SQS SendMessage Promises to process in parallel
-    const sendPromises = rows.map(student => {
+    const sendPromises = toQueue.map(student => {
       const messageBody = JSON.stringify({
         code_massar: student.code_massar,
         full_name: student.full_name,
@@ -750,11 +785,13 @@ app.post("/api/admin/generate-diplomas", authMiddleware, adminMiddleware, async 
 
     // Wait for all messages to be queued
     await Promise.all(sendPromises);
-    console.log(`Successfully queued ${rows.length} diploma generation messages in SQS.`);
+    console.log(`Successfully queued ${toQueue.length} diploma generation messages in SQS.`);
 
     return res.status(200).json({ 
-      message: "Diploma generation triggered", 
-      count: rows.length 
+      message: `Diploma generation triggered. Queued ${toQueue.length} and skipped ${skippedCount}.`, 
+      count: toQueue.length,
+      queued: toQueue.length,
+      skipped: skippedCount
     });
   } catch (error) {
     console.error("Failed to trigger diploma generation:", error.message);
@@ -982,7 +1019,31 @@ app.get("/api/admin/students", authMiddleware, adminMiddleware, async (req, res)
     const [rows] = await db.query(
       "SELECT id, code_massar, full_name, email, phone, result, enabled FROM students ORDER BY id DESC"
     );
-    return res.status(200).json(rows);
+
+    const bucketName = process.env.DOCUMENTS_BUCKET_NAME;
+
+    // Enrich students list with diploma existence from S3 in parallel
+    const enrichedRows = await Promise.all(
+      rows.map(async (student) => {
+        if (student.result !== "Admis" || !bucketName) {
+          return { ...student, diploma_generated: false };
+        }
+        try {
+          await s3Client.send(
+            new HeadObjectCommand({
+              Bucket: bucketName,
+              Key: `diplomas/${student.code_massar}_bac_diploma.pdf`
+            })
+          );
+          return { ...student, diploma_generated: true };
+        } catch (err) {
+          // If HeadObject fails (e.g. 404 or other error), we assume it's not generated
+          return { ...student, diploma_generated: false };
+        }
+      })
+    );
+
+    return res.status(200).json(enrichedRows);
   } catch (error) {
     console.error("Error retrieving student list for admin:", error.message);
     return res.status(500).json({ error: "Failed to fetch student list from database" });
