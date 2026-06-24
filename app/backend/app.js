@@ -303,6 +303,101 @@ const adminMiddleware = (req, res, next) => {
   next();
 };
 
+const MOROCCAN_COEFFICIENTS = {
+  "Sciences Physiques": {
+    "Examen Régional": {
+      "Langue arabe": 2,
+      "Français": 4,
+      "Éducation islamique": 2,
+      "Histoire-Géographie": 2
+    },
+    "Contrôle Continu": {
+      "Mathématiques": 7,
+      "Physique-Chimie": 7,
+      "Sciences de la Vie et de la Terre": 5,
+      "Philosophie": 2,
+      "Anglais": 2
+    },
+    "Examen National": {
+      "Mathématiques": 7,
+      "Physique-Chimie": 7,
+      "Sciences de la Vie et de la Terre": 5,
+      "Philosophie": 2,
+      "Anglais": 2
+    }
+  },
+  "Sciences Mathématiques A": {
+    "Examen Régional": {
+      "Langue arabe": 2,
+      "Français": 4,
+      "Éducation islamique": 2,
+      "Histoire-Géographie": 2
+    },
+    "Contrôle Continu": {
+      "Mathématiques": 9,
+      "Physique-Chimie": 7,
+      "Sciences de la Vie et de la Terre": 3,
+      "Philosophie": 2,
+      "Anglais": 2
+    },
+    "Examen National": {
+      "Mathématiques": 9,
+      "Physique-Chimie": 7,
+      "Sciences de la Vie et de la Terre": 3,
+      "Philosophie": 2,
+      "Anglais": 2
+    }
+  }
+};
+
+function calculateStudentAverages(branch, grades, level) {
+  const spec = MOROCCAN_COEFFICIENTS[branch] || MOROCCAN_COEFFICIENTS["Sciences Physiques"];
+  const is1Bac = level === '1ère Bac';
+
+  const regionalGrades = grades.filter(g => g.exam_type === 'Examen Régional');
+  const ccGrades = grades.filter(g => g.exam_type === 'Contrôle Continu');
+  const nationalGrades = grades.filter(g => g.exam_type === 'Examen National');
+
+  const calcComponentAverage = (componentName, componentGrades) => {
+    const coefs = spec[componentName];
+    let sumProducts = 0;
+    let sumCoefs = 0;
+
+    componentGrades.forEach(g => {
+      const coef = coefs[g.subject_name];
+      if (coef !== undefined) {
+        sumProducts += parseFloat(g.grade) * coef;
+        sumCoefs += coef;
+      }
+    });
+
+    if (sumCoefs > 0) {
+      return sumProducts / sumCoefs;
+    }
+    return 0.0;
+  };
+
+  const avgRegional = calcComponentAverage('Examen Régional', regionalGrades);
+  const avgCC = calcComponentAverage('Contrôle Continu', ccGrades);
+  const avgNational = is1Bac ? 0.0 : calcComponentAverage('Examen National', nationalGrades);
+
+  // 1ère Bac: 50% Régional + 50% CC (no national exam). Result is 'En cours' (not final).
+  // 2ème Bac: 25% Régional + 25% CC + 50% National.
+  const overallAverage = is1Bac
+    ? (avgRegional * 0.50) + (avgCC * 0.50)
+    : (avgRegional * 0.25) + (avgCC * 0.25) + (avgNational * 0.50);
+
+  const result = is1Bac ? 'En cours' : (overallAverage >= 10.00 ? 'Admis' : 'Ajourné');
+
+  return {
+    average_regional: parseFloat(avgRegional.toFixed(2)),
+    average_cc: parseFloat(avgCC.toFixed(2)),
+    average_national: parseFloat(avgNational.toFixed(2)),
+    average: parseFloat(overallAverage.toFixed(2)),
+    result: result
+  };
+}
+
 /**
  * ROUTE 1: GET /health
  * Public health check endpoint utilized by Application Load Balancers.
@@ -352,7 +447,7 @@ app.get("/api/results", authMiddleware, async (req, res) => {
     
     // Fetch Student data
     const [students] = await db.query(
-      "SELECT id, code_massar, full_name, email, phone, result FROM students WHERE code_massar = ?",
+      "SELECT id, code_massar, full_name, email, phone, branch, level, average_regional, average_cc, average_national, average, result FROM students WHERE code_massar = ?",
       [code_massar]
     );
 
@@ -364,7 +459,7 @@ app.get("/api/results", authMiddleware, async (req, res) => {
 
     // Fetch Subject Grades
     const [subjectGrades] = await db.query(
-      "SELECT subject_name, grade FROM subject_results WHERE student_id = ?",
+      "SELECT subject_name, exam_type, grade FROM subject_results WHERE student_id = ?",
       [student.id]
     );
 
@@ -372,9 +467,16 @@ app.get("/api/results", authMiddleware, async (req, res) => {
     const payload = {
       full_name: student.full_name,
       code_massar: student.code_massar,
+      branch: student.branch,
+      level: student.level || '2ème Bac',
+      average_regional: parseFloat(student.average_regional || 0.0),
+      average_cc: parseFloat(student.average_cc || 0.0),
+      average_national: parseFloat(student.average_national || 0.0),
+      average: parseFloat(student.average || 0.0),
       result: student.result,
       subject_results: subjectGrades.map(row => ({
         subject_name: row.subject_name,
+        exam_type: row.exam_type,
         grade: parseFloat(row.grade)
       }))
     };
@@ -484,8 +586,15 @@ app.get("/api/teacher/students", authMiddleware, teacherMiddleware, async (req, 
         s.full_name, 
         s.email, 
         s.phone, 
+        s.branch,
+        s.level,
+        s.average_regional,
+        s.average_cc,
+        s.average_national,
+        s.average,
         s.result,
         sr.subject_name,
+        sr.exam_type,
         sr.grade
       FROM students s
       LEFT JOIN subject_results sr ON s.id = sr.student_id
@@ -500,6 +609,12 @@ app.get("/api/teacher/students", authMiddleware, teacherMiddleware, async (req, 
           full_name: row.full_name,
           email: row.email,
           phone: row.phone,
+          branch: row.branch,
+          level: row.level || '2ème Bac',
+          average_regional: parseFloat(row.average_regional || 0.0),
+          average_cc: parseFloat(row.average_cc || 0.0),
+          average_national: parseFloat(row.average_national || 0.0),
+          average: parseFloat(row.average || 0.0),
           result: row.result,
           subject_results: []
         };
@@ -507,6 +622,7 @@ app.get("/api/teacher/students", authMiddleware, teacherMiddleware, async (req, 
       if (row.subject_name) {
         studentMap[row.id].subject_results.push({
           subject_name: row.subject_name,
+          exam_type: row.exam_type,
           grade: parseFloat(row.grade)
         });
       }
@@ -525,10 +641,10 @@ app.get("/api/teacher/students", authMiddleware, teacherMiddleware, async (req, 
  * Body: { code_massar, subject_name, grade }
  */
 app.post("/api/teacher/grades", authMiddleware, teacherMiddleware, async (req, res) => {
-  const { code_massar, subject_name, grade } = req.body;
+  const { code_massar, subject_name, exam_type, grade } = req.body;
 
-  if (!code_massar || !subject_name || typeof grade === "undefined") {
-    return res.status(400).json({ error: "Missing required parameters: code_massar, subject_name, and grade are required" });
+  if (!code_massar || !subject_name || !exam_type || typeof grade === "undefined") {
+    return res.status(400).json({ error: "Missing required parameters: code_massar, subject_name, exam_type, and grade are required" });
   }
 
   const parsedGrade = parseFloat(grade);
@@ -543,7 +659,7 @@ app.post("/api/teacher/grades", authMiddleware, teacherMiddleware, async (req, r
 
     // 1. Get student ID
     const [students] = await db.query(
-      "SELECT id FROM students WHERE code_massar = ?",
+      "SELECT id, branch, level FROM students WHERE code_massar = ?",
       [normalizedCode]
     );
 
@@ -552,43 +668,47 @@ app.post("/api/teacher/grades", authMiddleware, teacherMiddleware, async (req, r
     }
 
     const studentId = students[0].id;
+    const studentBranch = students[0].branch;
+    const studentLevel = students[0].level || '2ème Bac';
 
     // 2. Check if grade exists
     const [grades] = await db.query(
-      "SELECT id FROM subject_results WHERE student_id = ? AND subject_name = ?",
-      [studentId, subject_name]
+      "SELECT id FROM subject_results WHERE student_id = ? AND subject_name = ? AND exam_type = ?",
+      [studentId, subject_name, exam_type]
     );
 
     if (grades.length > 0) {
       // Update
       await db.query(
-        "UPDATE subject_results SET grade = ? WHERE student_id = ? AND subject_name = ?",
-        [parsedGrade, studentId, subject_name]
+        "UPDATE subject_results SET grade = ? WHERE student_id = ? AND subject_name = ? AND exam_type = ?",
+        [parsedGrade, studentId, subject_name, exam_type]
       );
     } else {
       // Insert
       await db.query(
-        "INSERT INTO subject_results (student_id, subject_name, grade) VALUES (?, ?, ?)",
-        [studentId, subject_name, parsedGrade]
+        "INSERT INTO subject_results (student_id, subject_name, exam_type, grade) VALUES (?, ?, ?, ?)",
+        [studentId, subject_name, exam_type, parsedGrade]
       );
     }
 
     // 3. Recalculate average and update student status (Admis vs Ajourné)
     const [allGrades] = await db.query(
-      "SELECT grade FROM subject_results WHERE student_id = ?",
+      "SELECT subject_name, exam_type, grade FROM subject_results WHERE student_id = ?",
       [studentId]
     );
 
-    let total = 0;
-    allGrades.forEach(row => {
-      total += parseFloat(row.grade);
-    });
-    const average = allGrades.length > 0 ? (total / allGrades.length) : 0;
-    const finalResult = average >= 10.0 ? "Admis" : "Ajourné";
+    const averages = calculateStudentAverages(studentBranch, allGrades, studentLevel);
 
     await db.query(
-      "UPDATE students SET result = ? WHERE id = ?",
-      [finalResult, studentId]
+      "UPDATE students SET average_regional = ?, average_cc = ?, average_national = ?, average = ?, result = ? WHERE id = ?",
+      [
+        averages.average_regional,
+        averages.average_cc,
+        averages.average_national,
+        averages.average,
+        averages.result,
+        studentId
+      ]
     );
 
     // 4. Invalidate/Delete Redis Cache key for the student
@@ -606,9 +726,9 @@ app.post("/api/teacher/grades", authMiddleware, teacherMiddleware, async (req, r
       message: "Grade successfully updated",
       student_code: normalizedCode,
       subject: subject_name,
+      exam_type: exam_type,
       grade: parsedGrade,
-      new_average: parseFloat(average.toFixed(2)),
-      new_result: finalResult
+      new_averages: averages
     });
   } catch (error) {
     console.error(`Error updating grade for student ${normalizedCode}:`, error.message);
@@ -638,7 +758,9 @@ app.post("/api/admin/release-results", authMiddleware, adminMiddleware, async (r
         s.email, 
         s.phone, 
         s.result,
+        s.average,
         sr.subject_name,
+        sr.exam_type,
         sr.grade
       FROM students s
       LEFT JOIN subject_results sr ON s.id = sr.student_id
@@ -657,12 +779,13 @@ app.post("/api/admin/release-results", authMiddleware, adminMiddleware, async (r
           email: row.email,
           phone: row.phone,
           result: row.result,
+          average: row.average,
           subjects: []
         };
       }
       if (row.subject_name) {
         studentMap[row.id].subjects.push({
-          subject_name: row.subject_name,
+          subject_name: `${row.subject_name} (${row.exam_type})`,
           grade: parseFloat(row.grade)
         });
       }
@@ -677,6 +800,7 @@ app.post("/api/admin/release-results", authMiddleware, adminMiddleware, async (r
         email: student.email,
         phone: student.phone,
         result: student.result,
+        average: student.average,
         full_name: student.full_name,
         subjects: student.subjects
       });
@@ -721,17 +845,16 @@ app.post("/api/admin/generate-diplomas", authMiddleware, adminMiddleware, async 
   try {
     const db = await getDbPool();
 
-    // Query all admitted students and calculate their average grade in one query
+    // Query all admitted students and retrieve their average and branch directly
     const [rows] = await db.query(`
       SELECT 
         s.code_massar, 
         s.full_name, 
         s.result,
-        COALESCE(AVG(sr.grade), 10.00) as average
+        s.branch,
+        s.average
       FROM students s
-      LEFT JOIN subject_results sr ON s.id = sr.student_id
-      WHERE s.result = 'Admis'
-      GROUP BY s.id
+      WHERE s.result = 'Admis' AND s.level = '2ème Bac'
     `);
 
     if (rows.length === 0) {
@@ -777,6 +900,7 @@ app.post("/api/admin/generate-diplomas", authMiddleware, adminMiddleware, async 
         code_massar: student.code_massar,
         full_name: student.full_name,
         result: student.result,
+        branch: student.branch,
         average: parseFloat(parseFloat(student.average).toFixed(2))
       });
 
@@ -1022,7 +1146,7 @@ app.get("/api/admin/students", authMiddleware, adminMiddleware, async (req, res)
   try {
     const db = await getDbPool();
     const [rows] = await db.query(
-      "SELECT id, code_massar, full_name, email, phone, result, enabled FROM students ORDER BY id DESC"
+      "SELECT id, code_massar, full_name, email, phone, branch, level, average, result, enabled FROM students ORDER BY id DESC"
     );
 
     const bucketName = process.env.DOCUMENTS_BUCKET_NAME;
@@ -1061,10 +1185,12 @@ app.get("/api/admin/students", authMiddleware, adminMiddleware, async (req, res)
  * Body: { full_name, email, phone }
  */
 app.post("/api/admin/students", authMiddleware, adminMiddleware, async (req, res) => {
-  const { full_name, email, phone } = req.body;
+  const { full_name, email, phone, branch, level } = req.body;
   if (!full_name || !email || !phone) {
     return res.status(400).json({ error: "Missing required parameters: full_name, email, and phone are required" });
   }
+  const cleanBranch = (branch || "Sciences Physiques").trim();
+  const cleanLevel = (level || "2ème Bac").trim();
 
   const cleanName = full_name.trim();
   const cleanEmail = email.trim();
@@ -1091,9 +1217,10 @@ app.post("/api/admin/students", authMiddleware, adminMiddleware, async (req, res
       code_massar = `${randomLetter}${digits}`;
 
       try {
+        const initialResult = cleanLevel === '1ère Bac' ? 'En cours' : 'Ajourné';
         await db.query(
-          "INSERT INTO students (code_massar, full_name, email, phone, result) VALUES (?, ?, ?, ?, 'Ajourné')",
-          [code_massar, cleanName, cleanEmail, cleanPhone]
+          "INSERT INTO students (code_massar, full_name, email, phone, branch, level, result) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          [code_massar, cleanName, cleanEmail, cleanPhone, cleanBranch, cleanLevel, initialResult]
         );
         success = true;
       } catch (error) {
@@ -1173,7 +1300,7 @@ app.post("/api/admin/students", authMiddleware, adminMiddleware, async (req, res
  */
 app.put("/api/admin/students/:id", authMiddleware, adminMiddleware, async (req, res) => {
   const studentId = parseInt(req.params.id, 10);
-  const { full_name, email, phone } = req.body;
+  const { full_name, email, phone, branch, level } = req.body;
 
   if (isNaN(studentId)) {
     return res.status(400).json({ error: "Invalid student ID parameter" });
@@ -1185,6 +1312,8 @@ app.put("/api/admin/students/:id", authMiddleware, adminMiddleware, async (req, 
   const cleanName = full_name.trim();
   const cleanEmail = email.trim();
   const cleanPhone = phone.trim();
+  const cleanBranch = (branch || "Sciences Physiques").trim();
+  const cleanLevel = (level || "2ème Bac").trim();
 
   try {
     const db = await getDbPool();
@@ -1203,8 +1332,28 @@ app.put("/api/admin/students/:id", authMiddleware, adminMiddleware, async (req, 
 
     // Update student details
     await db.query(
-      "UPDATE students SET full_name = ?, email = ?, phone = ? WHERE id = ?",
-      [cleanName, cleanEmail, cleanPhone, studentId]
+      "UPDATE students SET full_name = ?, email = ?, phone = ?, branch = ?, level = ? WHERE id = ?",
+      [cleanName, cleanEmail, cleanPhone, cleanBranch, cleanLevel, studentId]
+    );
+
+    // Recalculate average grades in case the branch changed
+    const [allGrades] = await db.query(
+      "SELECT subject_name, exam_type, grade FROM subject_results WHERE student_id = ?",
+      [studentId]
+    );
+
+    const averages = calculateStudentAverages(cleanBranch, allGrades, cleanLevel);
+
+    await db.query(
+      "UPDATE students SET average_regional = ?, average_cc = ?, average_national = ?, average = ?, result = ? WHERE id = ?",
+      [
+        averages.average_regional,
+        averages.average_cc,
+        averages.average_national,
+        averages.average,
+        averages.result,
+        studentId
+      ]
     );
 
     // Update attributes in Cognito User Pool
