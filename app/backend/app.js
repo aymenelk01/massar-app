@@ -1924,6 +1924,19 @@ app.post("/api/guidance/generate", authMiddleware, async (req, res) => {
              : "N/A"
     };
 
+    // Determine cross-region inference profile ID based on AWS Region to support regional availability
+    let modelId = "amazon.nova-pro-v1:0"; 
+    const currentRegion = process.env.AWS_REGION || "eu-south-1";
+    if (currentRegion.startsWith("us-")) {
+      modelId = "us.amazon.nova-pro-v1:0";
+    } else if (currentRegion.startsWith("eu-")) {
+      modelId = "eu.amazon.nova-pro-v1:0";
+    } else if (currentRegion.startsWith("ap-")) {
+      modelId = "ap.amazon.nova-pro-v1:0";
+    } else {
+      modelId = "us.amazon.nova-pro-v1:0"; // default fallback cross-region profile
+    }
+
     // ── 6. Compose the Bedrock prompt payload ────────────────────────────
     const systemPrompt = [
       {
@@ -1980,7 +1993,7 @@ app.post("/api/guidance/generate", authMiddleware, async (req, res) => {
     // ── 7. Call Amazon Bedrock ConverseCommand ────────────────────────────
     const bedrockResponse = await bedrockClient.send(
       new ConverseCommand({
-        modelId: "amazon.nova-pro-v1:0",
+        modelId: modelId,
         system: systemPrompt,
         messages: [userMessage],
         inferenceConfig: {
