@@ -2264,10 +2264,44 @@ app.post("/api/guidance/chat", authMiddleware, async (req, res) => {
       [student.id]
     );
 
-    // Build a human-readable grade table for the system prompt
-    const gradeLines = subjectRows.map(r =>
-      `  - ${r.subject_name} (${r.exam_type}): ${parseFloat(r.grade).toFixed(2)}/20`
-    );
+    // Group subject rows by exam type for clearer context
+    const nationalGrades = [];
+    const regionalGrades = [];
+    const ccGrades = [];
+
+    subjectRows.forEach(r => {
+      const line = `    - ${r.subject_name}: ${parseFloat(r.grade).toFixed(2)}/20`;
+      if (r.exam_type === "Examen National") {
+        nationalGrades.push(line);
+      } else if (r.exam_type === "Examen Régional") {
+        regionalGrades.push(line);
+      } else if (r.exam_type === "Contrôle Continu") {
+        ccGrades.push(line);
+      }
+    });
+
+    const gradeLines = [];
+    if (nationalGrades.length > 0) {
+      gradeLines.push("  * Examen National (National Exam — 50% weight):");
+      gradeLines.push(...nationalGrades);
+    }
+    if (regionalGrades.length > 0) {
+      gradeLines.push("  * Examen Régional (Regional Exam — 25% weight):");
+      gradeLines.push(...regionalGrades);
+    }
+    if (ccGrades.length > 0) {
+      gradeLines.push("  * Contrôle Continu (Continuous Assessment — 25% weight):");
+      gradeLines.push(...ccGrades);
+    }
+    if (gradeLines.length === 0) {
+      gradeLines.push("  (No subject grades recorded yet.)");
+    }
+
+    const gradesByType = {};
+    subjectRows.forEach(row => {
+      if (!gradesByType[row.exam_type]) gradesByType[row.exam_type] = {};
+      gradesByType[row.exam_type][row.subject_name] = parseFloat(row.grade);
+    });
 
     const overall      = parseFloat(student.average          || 0);
     const regionalAvg  = parseFloat(student.average_regional || 0);
@@ -2281,6 +2315,28 @@ app.post("/api/guidance/chat", authMiddleware, async (req, res) => {
       overall >= 14 ? "Bien"      :
       overall >= 12 ? "Assez Bien":
       overall >= 10 ? "Passable"  : "N/A";
+
+    const mathGrade = (gradesByType["Examen National"]?.["Mathématiques"]
+                    ?? gradesByType["Contrôle Continu"]?.["Mathématiques"]
+                    ?? 0);
+    const physGrade = (gradesByType["Examen National"]?.["Physique-Chimie"]
+                    ?? gradesByType["Contrôle Continu"]?.["Physique-Chimie"]
+                    ?? 0);
+    const svtGrade  = (gradesByType["Examen National"]?.["Sciences de la Vie et de la Terre"]
+                    ?? gradesByType["Contrôle Continu"]?.["Sciences de la Vie et de la Terre"]
+                    ?? 0);
+
+    const isRattrapageEligible = student.result === "Ajourné" && overall >= 8.0;
+    const cpgeEligible = student.result === "Admis" && overall >= 14.0
+                     && mathGrade >= 12 && physGrade >= 12;
+    const ensaEligible = student.result === "Admis" && overall >= 12.0
+                     && mathGrade >= 12;
+    const fmpEligible = student.result === "Admis" && overall >= 14.0
+                    && svtGrade >= 14 && physGrade >= 12;
+    const encgEligible = student.result === "Admis" && overall >= 12.0;
+    const estEligible = student.result === "Admis" && overall >= 10.0;
+    const fstEligible = student.result === "Admis" && overall >= 11.0
+                    && (mathGrade >= 10 || physGrade >= 10);
 
     // ── 5. Build the system prompt ─────────────────────────────────────────
     const systemPromptText = [
@@ -2296,14 +2352,23 @@ app.post("/api/guidance/chat", authMiddleware, async (req, res) => {
       "   general knowledge, etc.), politely decline and redirect them to their academic questions.",
       "3. NEVER perform mathematical calculations — all averages below are pre-computed and authoritative.",
       "   Trust them as ground truth and never modify them.",
-      "4. Be honest and constructive: if scores are low, acknowledge it respectfully and always",
-      "   propose a concrete, realistic path forward.",
+      "4. Be HONEST, direct, and constructive: if the student failed, say so clearly and respectfully.",
+      "   Never sugarcoat a failure or give false hope (e.g. suggesting they qualify for universities if they failed).",
+      "   Always accompany honesty with a concrete, realistic action plan based on their eligibility flags below.",
       "5. Be specific: cite real Moroccan schools, concours names, and orientation platforms",
       "   (cursussup.gov.ma, tawjihi.ma, bac.men.gov.ma).",
       "6. Keep replies concise and conversational — this is a chat, not a report.",
       "   Use short paragraphs or bullet points when listing options.",
       "7. Do NOT repeat the student's full grade table back to them unless they explicitly ask.",
       "8. Do NOT invent schools, thresholds, or requirements not grounded in your knowledge.",
+      "9. NEVER contradict the pre-calculated Eligibility Status flags below. For example, if the student asks if they are eligible for rattrapage (retakes) and it is marked NOT ELIGIBLE, you must state that they are NOT eligible, explaining that their overall average (e.g. 2.78/20) does not meet the minimum required 8.00/20 threshold. Never say they are eligible or that the threshold is 2/20.",
+      "10. If the student is ELIGIBLE for Rattrapage (overall average 8.00–9.99/20, result = Ajourné):",
+      "    - Explain the rules: only National Exam papers are retaken (Regional and CC are kept).",
+      "    - Explain that the final subject grade is the BEST score between ordinary and retake sessions.",
+      "    - Help them target a revision strategy: focus on high-coefficient subjects (e.g. Maths, Physics, SVT depending on stream) where they got low grades, as improvement there yields the biggest impact to push their average above 10.00/20.",
+      "11. If the student is NOT eligible for Rattrapage (average < 8.00/20, result = Ajourné):",
+      "    - Be direct and honest that they cannot retake the exam this year.",
+      "    - Guide them to concrete alternatives: repeat the year at school (if allowed), register as a 'Candidat Libre' (Free Candidate) for next year's Baccalaureate, or apply to OFPPT vocational training (Niveau Qualification) which accepts 'Niveau 2ème Année Bac' (completed the year but without diploma).",
       "",
       "════════════════════════════════════════════════════",
       "STUDENT'S ACADEMIC RECORD (pre-validated, authoritative):",
@@ -2320,6 +2385,15 @@ app.post("/api/guidance/chat", authMiddleware, async (req, res) => {
       `  Examen National:  ${nationalAvg.toFixed(2)}/20`,
       `  Moyenne Générale: ${overall.toFixed(2)}/20`,
       "",
+      "Eligibility Status (derived server-side, trust these absolutely):",
+      `  Rattrapage Session (Retakes): ${isRattrapageEligible ? "ELIGIBLE" : "NOT ELIGIBLE"} (Requires result = Ajourné AND overall average between 8.00 and 9.99/20)`,
+      `  CPGE (Preparatory Classes): ${cpgeEligible ? "ELIGIBLE" : "NOT ELIGIBLE"}`,
+      `  ENSA (Engineering Network): ${ensaEligible ? "ELIGIBLE" : "NOT ELIGIBLE"}`,
+      `  FMP (Medicine/Pharmacy): ${fmpEligible ? "ELIGIBLE" : "NOT ELIGIBLE"}`,
+      `  ENCG (Business/Management): ${encgEligible ? "ELIGIBLE" : "NOT ELIGIBLE"}`,
+      `  EST (Technology Institutes): ${estEligible ? "ELIGIBLE" : "NOT ELIGIBLE"}`,
+      `  FST (Faculty of Sciences & Techniques): ${fstEligible ? "ELIGIBLE" : "NOT ELIGIBLE"}`,
+      "",
       "Subject grades:",
       ...(gradeLines.length > 0 ? gradeLines : ["  (No subject grades recorded yet.)"]),
       "",
@@ -2335,7 +2409,8 @@ app.post("/api/guidance/chat", authMiddleware, async (req, res) => {
       "- FS (fundamental sciences, near open-access): ≥ 10/20",
       "- FSJES (law, economics — open access): ≥ 10/20",
       "- OFPPT/ISTA/BTS (vocational): ≥ 10/20 in relevant subjects",
-      "- Rattrapage eligible: result = Ajourné AND overall ≥ 8/20",
+      "- Rattrapage session rules: only National Exam papers are retaken (Regional and CC are kept). Best score between ordinary and retake is kept for each retaken subject.",
+      "- Failed Baccalaureate alternatives: repeat the year at school, register as a 'Candidat Libre' (Free Candidate) for next year's Baccalaureate, or apply to OFPPT/ISTA (Niveau Qualification) which accepts 'Niveau 2ème Année Bac' (completed 2nd year of Baccalaureate without passing the exam).",
       "- Key platforms: cursussup.gov.ma, tawjihi.ma, bac.men.gov.ma",
     ].join("\n");
 
