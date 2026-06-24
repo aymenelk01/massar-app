@@ -28,6 +28,7 @@ const {
   AdminDisableUserCommand,
   AdminEnableUserCommand
 } = require("@aws-sdk/client-cognito-identity-provider");
+const { BedrockRuntimeClient, ConverseCommand } = require("@aws-sdk/client-bedrock-runtime");
 
 
 const app = express();
@@ -38,9 +39,10 @@ const REGION = process.env.AWS_REGION || "eu-south-1";
 const PORT = process.env.PORT || 3000;
 
 // AWS Clients Instantiations (Credential loading is managed by ECS Task Role)
-const sqsClient = new SQSClient({ region: REGION });
-const s3Client = new S3Client({ region: REGION });
+const sqsClient     = new SQSClient({ region: REGION });
+const s3Client      = new S3Client({ region: REGION });
 const cognitoClient = new CognitoIdentityProviderClient({ region: REGION });
+const bedrockClient = new BedrockRuntimeClient({ region: REGION });
 
 // Global holder for the MySQL connection pool
 let dbPool = null;
@@ -1783,6 +1785,248 @@ async function startupInitialization() {
     });
   }
 }
+
+/**
+ * ROUTE: POST /api/guidance/generate
+ * Protected route (students only — no Cognito group = student).
+ * Fetches the authenticated student's academic record from Aurora, pre-calculates
+ * eligibility thresholds for Moroccan higher-education paths, then calls Amazon
+ * Bedrock (amazon.nova-pro-v1:0 via ConverseCommand) with a strict system prompt
+ * that forces qualitative-only analysis.  The model MUST NOT recompute averages.
+ */
+app.post("/api/guidance/generate", authMiddleware, async (req, res) => {
+  // ── 1. Identity resolution ─────────────────────────────────────────────
+  const cognitoUser = req.user.username || req.user["cognito:username"] || req.user.email || "";
+  const code_massar = cognitoUser.split("@")[0].toUpperCase();
+
+  if (!code_massar) {
+    return res.status(400).json({ error: "Invalid user claim format. Cannot parse code_massar." });
+  }
+
+  // Reject admins and teachers — guidance is a student-only feature.
+  const groups = req.user["cognito:groups"] || [];
+  if (groups.includes("admins") || groups.includes("teachers")) {
+    return res.status(403).json({ error: "Forbidden: Guidance reports are only available to students." });
+  }
+
+  try {
+    // ── 2. Fetch student record from Aurora ───────────────────────────────
+    const db = await getDbPool();
+
+    const [students] = await db.query(
+      `SELECT id, full_name, branch, level, result,
+              average_regional, average_cc, average_national, average
+       FROM students WHERE code_massar = ?`,
+      [code_massar]
+    );
+
+    if (students.length === 0) {
+      return res.status(404).json({ error: "Student record not found." });
+    }
+
+    const student = students[0];
+
+    // Guidance is meaningful only for 2ème Bac students with a final result.
+    if ((student.level || "2ème Bac") === "1ère Bac") {
+      return res.status(400).json({
+        error: "Guidance reports are only available for 2ème Baccalaureate students after their final exams."
+      });
+    }
+
+    // ── 3. Fetch subject grades ────────────────────────────────────────────
+    const [subjectRows] = await db.query(
+      `SELECT subject_name, exam_type, grade
+       FROM subject_results WHERE student_id = ?
+       ORDER BY exam_type, subject_name`,
+      [student.id]
+    );
+
+    // ── 4. Build subject grade map grouped by exam type ───────────────────
+    const gradesByType = {};
+    subjectRows.forEach(row => {
+      if (!gradesByType[row.exam_type]) gradesByType[row.exam_type] = {};
+      gradesByType[row.exam_type][row.subject_name] = parseFloat(row.grade);
+    });
+
+    // Retrieve per-subject coefficients for this student's branch.
+    const branchCoefs = MOROCCAN_COEFFICIENTS[student.branch] || MOROCCAN_COEFFICIENTS["Sciences Physiques"];
+
+    // Annotate each grade with its coefficient for transparency in the prompt.
+    const annotatedGrades = [];
+    subjectRows.forEach(row => {
+      const coef = branchCoefs[row.exam_type]?.[row.subject_name] ?? null;
+      annotatedGrades.push({
+        subject: row.subject_name,
+        exam_type: row.exam_type,
+        grade: parseFloat(row.grade),
+        coefficient: coef,
+        status: parseFloat(row.grade) >= 10 ? "Passed" : "Failed"
+      });
+    });
+
+    // ── 5. Pre-calculate eligibility thresholds (server-side only) ────────
+    //   These hard thresholds are sourced from Moroccan CNEA/orientation guides.
+    //   The LLM must ONLY interpret these; it must NOT recompute them.
+    const overall = parseFloat(student.average || 0);
+    const regionalAvg = parseFloat(student.average_regional || 0);
+    const ccAvg = parseFloat(student.average_cc || 0);
+    const nationalAvg = parseFloat(student.average_national || 0);
+    const branch = student.branch || "Sciences Physiques";
+
+    const mathGrade = (gradesByType["Examen National"]?.["Mathématiques"]
+                    ?? gradesByType["Contrôle Continu"]?.["Mathématiques"]
+                    ?? 0);
+    const physGrade = (gradesByType["Examen National"]?.["Physique-Chimie"]
+                    ?? gradesByType["Contrôle Continu"]?.["Physique-Chimie"]
+                    ?? 0);
+    const svtGrade  = (gradesByType["Examen National"]?.["Sciences de la Vie et de la Terre"]
+                    ?? gradesByType["Contrôle Continu"]?.["Sciences de la Vie et de la Terre"]
+                    ?? 0);
+    const frGrade   = (gradesByType["Examen Régional"]?.["Français"] ?? 0);
+    const engGrade  = (gradesByType["Examen National"]?.["Anglais"]
+                    ?? gradesByType["Contrôle Continu"]?.["Anglais"]
+                    ?? 0);
+
+    const eligibility = {
+      // Admitted or deferred
+      bac_result: student.result,           // "Admis" | "Ajourné"
+      rattrapage_eligible: student.result === "Ajourné" && overall >= 8.0,
+
+      // Grandes Écoles / Prépa
+      cpge_eligible: student.result === "Admis" && overall >= 14.0
+                     && mathGrade >= 12 && physGrade >= 12,
+
+      // Engineering
+      ensa_eligible: student.result === "Admis" && overall >= 12.0
+                     && mathGrade >= 12,
+      ensa_competitive: student.result === "Admis" && overall >= 14.0
+                        && mathGrade >= 14,
+
+      // Medicine / Pharmacy
+      fmp_eligible: student.result === "Admis" && overall >= 14.0
+                    && svtGrade >= 14 && physGrade >= 12,
+
+      // Commerce / Management (ENCG)
+      encg_eligible: student.result === "Admis" && overall >= 12.0,
+
+      // Technology institutes (EST)
+      est_eligible: student.result === "Admis" && overall >= 10.0,
+
+      // Sciences / Research faculties (FST, FS)
+      fst_eligible: student.result === "Admis" && overall >= 11.0
+                    && (mathGrade >= 10 || physGrade >= 10),
+
+      // Honour mentions (Mention)
+      mention: overall >= 16.0 ? "Très Bien"
+             : overall >= 14.0 ? "Bien"
+             : overall >= 12.0 ? "Assez Bien"
+             : overall >= 10.0 ? "Passable"
+             : "N/A"
+    };
+
+    // ── 6. Compose the Bedrock prompt payload ────────────────────────────
+    const systemPrompt = [
+      {
+        text: [
+          "You are an expert Moroccan academic advisor specializing in post-Baccalaureate guidance.",
+          "Your role is to produce a personalized, empathetic, and actionable academic guidance report in English.",
+          "",
+          "CRITICAL RULES — you MUST follow all of them without exception:",
+          "1. You MUST NOT perform any mathematical calculations or modify any numerical values.",
+          "   All averages, grades, coefficients, and eligibility flags are pre-calculated and authoritative.",
+          "2. Base ALL eligibility statements exclusively on the 'eligibility' object provided in the user message.",
+          "3. Structure your response with these sections, using markdown headers (##):",
+          "   ## Academic Summary",
+          "   ## Strengths & Areas for Improvement",
+          "   ## Higher Education Pathways",
+          "   ## Action Plan",
+          "4. If the student failed (result = Ajourné), focus on rattrapage strategies and motivation.",
+          "   If rattrapage_eligible is true, explain the Moroccan 'session de rattrapage' process.",
+          "5. If the student passed (result = Admis), recommend pathways based only on the eligibility flags.",
+          "6. Be specific to the Moroccan educational system (mention actual institution names: ENSA, ENCG, FMP, CPGE, EST, FST, FSTG, etc.).",
+          "7. Tone must be encouraging, direct, and professional — as if speaking to a Moroccan secondary school graduate.",
+          "8. Keep the report concise: maximum 600 words.",
+          "9. Do NOT invent eligibility. If a flag is false, do NOT recommend that pathway.",
+          "10. Do NOT include any preamble like 'Here is the report'. Start directly with ## Academic Summary."
+        ].join("\n")
+      }
+    ];
+
+    const userMessage = {
+      role: "user",
+      content: [
+        {
+          text: JSON.stringify({
+            student: {
+              full_name: student.full_name,
+              branch: branch,
+              level: "2ème Baccalaureate"
+            },
+            averages: {
+              examen_regional: regionalAvg.toFixed(2),
+              controle_continu: ccAvg.toFixed(2),
+              examen_national: nationalAvg.toFixed(2),
+              moyenne_generale: overall.toFixed(2),
+              formula: "25% Régional + 25% CC + 50% National"
+            },
+            grades_by_subject: annotatedGrades,
+            eligibility,
+            note: "All numerical data above is pre-validated and authoritative. Do NOT recalculate."
+          }, null, 2)
+        }
+      ]
+    };
+
+    // ── 7. Call Amazon Bedrock ConverseCommand ────────────────────────────
+    const bedrockResponse = await bedrockClient.send(
+      new ConverseCommand({
+        modelId: "amazon.nova-pro-v1:0",
+        system: systemPrompt,
+        messages: [userMessage],
+        inferenceConfig: {
+          maxTokens: 1024,
+          temperature: 0.5,   // Balanced — factual but empathetic
+          topP: 0.9
+        }
+      })
+    );
+
+    // Extract text from the Converse API response structure
+    const outputMessage = bedrockResponse.output?.message?.content ?? [];
+    const guidanceText = outputMessage
+      .filter(block => block.text)
+      .map(block => block.text)
+      .join("\n")
+      .trim();
+
+    if (!guidanceText) {
+      console.error(`Bedrock returned empty content for student ${code_massar}`);
+      return res.status(502).json({ error: "The AI guidance service returned an empty response. Please try again." });
+    }
+
+    console.log(`Guidance report generated for student ${code_massar} (${student.result})`);
+
+    return res.status(200).json({
+      guidance: guidanceText,
+      result: student.result,
+      overall_average: overall.toFixed(2),
+      mention: eligibility.mention
+    });
+
+  } catch (error) {
+    // Surface actionable Bedrock errors without leaking internal details
+    if (error.name === "AccessDeniedException" || error.$metadata?.httpStatusCode === 403) {
+      console.error(`Bedrock access denied for student ${code_massar}:`, error.message);
+      return res.status(503).json({ error: "The AI guidance service is not accessible. Please contact your administrator." });
+    }
+    if (error.name === "ValidationException") {
+      console.error(`Bedrock validation error for student ${code_massar}:`, error.message);
+      return res.status(400).json({ error: "Could not process the guidance request. Please try again." });
+    }
+    console.error(`Guidance generation error for student ${code_massar}:`, error.message);
+    return res.status(500).json({ error: "An unexpected error occurred while generating your guidance report." });
+  }
+});
 
 // Start Server listening on port 3000 (required by AWS target group)
 app.listen(PORT, () => {
