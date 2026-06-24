@@ -38,6 +38,9 @@ const studentIdInput       = document.getElementById("student-id-input");
 const studentNameInput     = document.getElementById("student-name");
 const studentEmailInput    = document.getElementById("student-email");
 const studentPhoneInput    = document.getElementById("student-phone");
+const studentBranchInput   = document.getElementById("student-branch");
+const studentLevelInput    = document.getElementById("student-level");
+const filterLevel          = document.getElementById("filter-level");
 
 const saveBtnLabel         = document.getElementById("save-btn-label");
 const saveBtnSpinner       = document.getElementById("save-btn-spinner");
@@ -223,16 +226,36 @@ async function loadStudents() {
 function renderStudentsTable() {
   studentsTbody.innerHTML = "";
 
-  if (studentsList.length === 0) {
+  const selectedLevel = filterLevel ? filterLevel.value : "2ème Bac";
+
+  // Hide the global "Generate Diplomas" button if 1ère Bac is selected
+  if (generateDiplomasBtn) {
+    if (selectedLevel === "1ère Bac") {
+      generateDiplomasBtn.style.display = "none";
+    } else {
+      generateDiplomasBtn.style.display = "";
+    }
+  }
+
+  const filteredStudents = studentsList.filter(student => {
+    const studentLevel = student.level || "2ème Bac";
+    return studentLevel === selectedLevel;
+  });
+
+  if (filteredStudents.length === 0) {
     const row = document.createElement("tr");
-    row.innerHTML = `<td colspan="8" style="text-align: center; color: var(--neutral-600);">No student records found.</td>`;
+    row.innerHTML = `<td colspan="9" style="text-align: center; color: var(--neutral-600);">No student records found.</td>`;
     studentsTbody.appendChild(row);
     return;
   }
 
-  studentsList.forEach(student => {
+  filteredStudents.forEach(student => {
     const statusLabel = student.result || "Ajourné";
-    const statusClass = statusLabel === "Admis" ? "badge-status--admis" : "badge-status--ajourne";
+    const statusClass = statusLabel === "Admis" 
+      ? "badge-status--admis" 
+      : statusLabel === "En cours"
+        ? "badge-status--pending"
+        : "badge-status--ajourne";
 
     const isEnabled = student.enabled !== 0; // Default enabled
     const accountLabel = isEnabled ? "Active" : "Suspended";
@@ -240,20 +263,30 @@ function renderStudentsTable() {
     const toggleButtonLabel = isEnabled ? "Disable" : "Enable";
     const toggleButtonStyle = isEnabled ? "color: var(--red-600); border-color: #f5c6c2;" : "color: var(--green-700); border-color: #a3d9b1;";
 
-    const diplomaBadge = student.result !== "Admis"
+    const is1Bac = (student.level || "2ème Bac") === "1ère Bac";
+    const diplomaBadge = is1Bac
       ? `<span style="color: var(--neutral-400);">—</span>`
-      : student.diploma_generated
-        ? `<span class="badge-status badge-status--admis">Generated ✓</span>`
-        : `<span class="badge-status badge-status--ajourne">Pending</span>`;
+      : student.result !== "Admis"
+        ? `<span style="color: var(--neutral-400);">—</span>`
+        : student.diploma_generated
+          ? `<span class="badge-status badge-status--admis">Generated ✓</span>`
+          : `<span class="badge-status badge-status--ajourne">Pending</span>`;
+
+    const levelLabel = student.level || '2ème Bac';
+    const levelClass = levelLabel === '1ère Bac' ? 'badge-status--pending' : 'badge-status--info';
 
     const row = document.createElement("tr");
     row.innerHTML = `
       <td><strong>${student.code_massar || "—"}</strong></td>
-      <td>${student.full_name || "—"}</td>
+      <td>${student.full_name || "—"}<br/><small style="color: var(--neutral-600);">${student.branch || "Sciences Physiques"}</small></td>
       <td>${student.email || "—"}</td>
       <td>${student.phone || "—"}</td>
       <td style="text-align: center;">
-        <span class="badge-status ${statusClass}">${statusLabel}</span>
+        <span class="badge-status ${levelClass}">${levelLabel}</span>
+      </td>
+      <td style="text-align: center;">
+        <span class="badge-status ${statusClass}">${statusLabel}</span><br/>
+        <small style="color: var(--neutral-600); font-weight: 500;">${student.average ? parseFloat(student.average).toFixed(2) + '/20' : '0.00/20'}</small>
       </td>
       <td style="text-align: center;">
         ${diplomaBadge}
@@ -299,6 +332,8 @@ function openStudentModal(student = null) {
     studentNameInput.value = student.full_name || "";
     studentEmailInput.value = student.email || "";
     studentPhoneInput.value = student.phone || "";
+    studentBranchInput.value = student.branch || "Sciences Physiques";
+    if (studentLevelInput) studentLevelInput.value = student.level || "2ème Bac";
   } else {
     // Create mode
     modalTitle.textContent = "Add Student";
@@ -307,6 +342,8 @@ function openStudentModal(student = null) {
     studentNameInput.value = "";
     studentEmailInput.value = "";
     studentPhoneInput.value = "";
+    studentBranchInput.value = "Sciences Physiques";
+    if (studentLevelInput) studentLevelInput.value = "2ème Bac";
   }
 
   studentModalBackdrop.style.display = "flex";
@@ -330,12 +367,14 @@ studentForm.addEventListener("submit", async function (e) {
   e.preventDefault();
   hideAlerts();
 
-  const name  = studentNameInput.value.trim();
-  const email = studentEmailInput.value.trim();
-  const phone = studentPhoneInput.value.trim();
-  const id    = studentIdInput.value;
+  const name   = studentNameInput.value.trim();
+  const email  = studentEmailInput.value.trim();
+  const phone  = studentPhoneInput.value.trim();
+  const branch = studentBranchInput.value;
+  const level  = studentLevelInput ? studentLevelInput.value : '2ème Bac';
+  const id     = studentIdInput.value;
 
-  if (!name || !email || !phone) {
+  if (!name || !email || !phone || !branch) {
     showModalError("All profile fields are required.");
     return;
   }
@@ -356,7 +395,9 @@ studentForm.addEventListener("submit", async function (e) {
       body: JSON.stringify({
         full_name: name,
         email: email,
-        phone: phone
+        phone: phone,
+        branch: branch,
+        level: level
       })
     });
 
@@ -901,6 +942,12 @@ releaseResultsBtn.addEventListener("click", () => {
 if (generateDiplomasBtn) {
   generateDiplomasBtn.addEventListener("click", () => {
     triggerGenerateDiplomas();
+  });
+}
+
+if (filterLevel) {
+  filterLevel.addEventListener("change", () => {
+    renderStudentsTable();
   });
 }
 

@@ -77,6 +77,8 @@
               <div class="student-card__info">
                 <h1 class="student-card__name" id="student-name">—</h1>
                 <p class="student-card__code" id="student-code">—</p>
+                <p class="student-card__code" style="margin-top: 4px; font-weight: 500;"><span id="student-branch">—</span></p>
+                <p class="student-card__code" style="margin-top: 2px; font-size: 0.85rem; color: var(--neutral-500);">Niveau: <span id="student-level">—</span></p>
               </div>
               <!-- Result badge -->
               <div class="result-badge" id="result-badge" aria-live="polite">
@@ -87,29 +89,35 @@
             <!-- Divider -->
             <hr class="divider" />
 
-            <!-- Subject results table -->
+            <!-- Averages Breakdown Cards -->
+            <section aria-labelledby="averages-heading" style="margin-top: 10px; margin-bottom: 24px;">
+              <h2 class="section-title" id="averages-heading" style="margin-bottom: 16px;">Baccalaureate Averages</h2>
+              <div class="averages-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px;">
+                <div class="average-card" style="background: var(--neutral-100); border: 1px solid var(--neutral-200); padding: 16px; border-radius: 8px; text-align: center;">
+                  <span class="average-card__title" style="display: block; font-size: 0.85rem; color: var(--neutral-600); font-weight: 500; margin-bottom: 8px;">Examen Régional</span>
+                  <strong class="average-card__value" id="average-regional" style="font-size: 1.5rem; color: var(--neutral-800);">—</strong>
+                </div>
+                <div class="average-card" style="background: var(--neutral-100); border: 1px solid var(--neutral-200); padding: 16px; border-radius: 8px; text-align: center;">
+                  <span class="average-card__title" style="display: block; font-size: 0.85rem; color: var(--neutral-600); font-weight: 500; margin-bottom: 8px;">Contrôle Continu</span>
+                  <strong class="average-card__value" id="average-cc" style="font-size: 1.5rem; color: var(--neutral-800);">—</strong>
+                </div>
+                <div id="average-national-card" class="average-card" style="background: var(--neutral-100); border: 1px solid var(--neutral-200); padding: 16px; border-radius: 8px; text-align: center;">
+                  <span class="average-card__title" style="display: block; font-size: 0.85rem; color: var(--neutral-600); font-weight: 500; margin-bottom: 8px;">Examen National (50%)</span>
+                  <strong class="average-card__value" id="average-national" style="font-size: 1.5rem; color: var(--neutral-800);">—</strong>
+                </div>
+                <div class="average-card" style="background: linear-gradient(135deg, var(--green-50), #e8f5e9); border: 1px solid var(--green-200); padding: 16px; border-radius: 8px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+                  <span class="average-card__title" style="display: block; font-size: 0.85rem; color: var(--green-700); font-weight: bold; margin-bottom: 8px;">Moyenne Générale</span>
+                  <strong class="average-card__value" id="average-overall" style="font-size: 1.6rem; color: var(--green-800);">—</strong>
+                  <span class="average-card__mention" id="average-mention" style="display: block; font-size: 0.75rem; color: var(--green-700); font-weight: 600; margin-top: 4px;">—</span>
+                </div>
+              </div>
+            </section>
+
+            <!-- Subject results tables -->
             <section aria-labelledby="subjects-heading">
-              <h2 class="section-title" id="subjects-heading">Subject Grades</h2>
-              <div class="table-wrapper">
-                <table class="results-table" id="subjects-table">
-                  <thead>
-                    <tr>
-                      <th scope="col">Subject</th>
-                      <th scope="col" class="grade-col">Grade / 20</th>
-                      <th scope="col" class="status-col">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody id="subjects-tbody">
-                    <!-- Populated by JS -->
-                  </tbody>
-                  <tfoot>
-                    <tr class="average-row">
-                      <td><strong>Overall Average</strong></td>
-                      <td class="grade-col"><strong id="average-grade">—</strong></td>
-                      <td class="status-col"></td>
-                    </tr>
-                  </tfoot>
-                </table>
+              <h2 class="section-title" id="subjects-heading" style="margin-bottom: 16px;">Detailed Subject Grades</h2>
+              <div id="results-tables-container">
+                <!-- Dynamically populated by results.js -->
               </div>
             </section>
 

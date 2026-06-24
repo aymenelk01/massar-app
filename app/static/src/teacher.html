@@ -82,6 +82,7 @@
                   <th scope="col">Student Full Name</th>
                   <th scope="col">Email</th>
                   <th scope="col">Phone</th>
+                  <th scope="col" style="text-align: center;">Niveau</th>
                   <th scope="col" style="text-align: center;">Status</th>
                   <th scope="col" style="text-align: center;">Actions</th>
                 </tr>
@@ -120,25 +121,26 @@
 
           <div class="divider" style="margin: 12px 0;"></div>
 
-          <!-- Subject Input List -->
+          <!-- Moroccan Exam Component & Subject Selector -->
           <div class="form-group">
-            <label class="form-label" for="grade-math">Mathématiques <span class="required">*</span></label>
-            <input class="form-input grade-input" type="number" id="grade-math" step="0.25" min="0" max="20" required placeholder="0.00 to 20.00" />
+            <label class="form-label" for="grade-exam-type">Exam Type <span class="required">*</span></label>
+            <select class="form-input" id="grade-exam-type" required>
+              <option value="Contrôle Continu">Contrôle Continu</option>
+              <option value="Examen Régional">Examen Régional</option>
+              <option value="Examen National">Examen National</option>
+            </select>
           </div>
 
           <div class="form-group">
-            <label class="form-label" for="grade-phys">Physique-Chimie <span class="required">*</span></label>
-            <input class="form-input grade-input" type="number" id="grade-phys" step="0.25" min="0" max="20" required placeholder="0.00 to 20.00" />
+            <label class="form-label" for="grade-subject">Subject <span class="required">*</span></label>
+            <select class="form-input" id="grade-subject" required>
+              <!-- Populated dynamically by JS -->
+            </select>
           </div>
 
           <div class="form-group">
-            <label class="form-label" for="grade-svt">Sciences de la Vie et de la Terre <span class="required">*</span></label>
-            <input class="form-input grade-input" type="number" id="grade-svt" step="0.25" min="0" max="20" required placeholder="0.00 to 20.00" />
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="grade-philo">Philosophie <span class="required">*</span></label>
-            <input class="form-input grade-input" type="number" id="grade-philo" step="0.25" min="0" max="20" required placeholder="0.00 to 20.00" />
+            <label class="form-label" for="grade-value">Grade / 20 <span class="required">*</span></label>
+            <input class="form-input grade-input" type="number" id="grade-value" step="0.25" min="0" max="20" required placeholder="0.00 to 20.00" />
           </div>
 
           <div class="modal-footer">

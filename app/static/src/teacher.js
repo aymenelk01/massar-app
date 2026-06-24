@@ -26,10 +26,9 @@ const modalStudentCode  = document.getElementById("modal-student-code");
 const modalErrorAlert   = document.getElementById("modal-error-alert");
 const modalErrorText    = document.getElementById("modal-error-text");
 
-const gradeMath         = document.getElementById("grade-math");
-const gradePhys         = document.getElementById("grade-phys");
-const gradeSvt          = document.getElementById("grade-svt");
-const gradePhilo        = document.getElementById("grade-philo");
+const gradeExamType     = document.getElementById("grade-exam-type");
+const gradeSubject      = document.getElementById("grade-subject");
+const gradeValue        = document.getElementById("grade-value");
 
 const saveBtnLabel      = document.getElementById("save-btn-label");
 const saveBtnSpinner    = document.getElementById("save-btn-spinner");
@@ -150,24 +149,35 @@ function renderStudentsTable() {
 
   if (studentsList.length === 0) {
     const row = document.createElement("tr");
-    row.innerHTML = `<td colspan="6" style="text-align: center; color: var(--neutral-600);">No student records found.</td>`;
+    row.innerHTML = `<td colspan="7" style="text-align: center; color: var(--neutral-600);">No student records found.</td>`;
     studentsTbody.appendChild(row);
     return;
   }
 
   studentsList.forEach(student => {
     const statusLabel = student.result || "Ajourné";
-    const statusClass = statusLabel === "Admis" ? "badge-status--admis" : "badge-status--ajourne";
+    const statusClass = statusLabel === "Admis" 
+      ? "badge-status--admis" 
+      : statusLabel === "En cours"
+        ? "badge-status--pending"
+        : "badge-status--ajourne";
+
+    const levelLabel = student.level || '2ème Bac';
+    const levelClass = levelLabel === '1ère Bac' ? 'badge-status--pending' : 'badge-status--info';
 
     const row = document.createElement("tr");
     row.className = "student-list-row";
     row.innerHTML = `
       <td><strong>${student.code_massar || "—"}</strong></td>
-      <td>${student.full_name || "—"}</td>
+      <td>${student.full_name || "—"}<br/><small style="color: var(--neutral-600);">${student.branch || "Sciences Physiques"}</small></td>
       <td>${student.email || "—"}</td>
       <td>${student.phone || "—"}</td>
       <td style="text-align: center;">
-        <span class="badge-status ${statusClass}">${statusLabel}</span>
+        <span class="badge-status ${levelClass}">${levelLabel}</span>
+      </td>
+      <td style="text-align: center;">
+        <span class="badge-status ${statusClass}">${statusLabel}</span><br/>
+        <small style="color: var(--neutral-600); font-weight: 500;">${student.average ? parseFloat(student.average).toFixed(2) + '/20' : '0.00/20'}</small>
       </td>
       <td style="text-align: center;">
         <button class="btn btn--ghost btn--sm edit-action-btn" type="button" data-id="${student.id}">Edit Grades</button>
@@ -192,6 +202,57 @@ function renderStudentsTable() {
 }
 
 // ── Modal Actions ──────────────────────────────────────────────────────────
+// A mapping of exam types to their respective Moroccan Baccalaureate subjects
+const EXAM_SUBJECTS = {
+  "Examen Régional": ["Français", "Langue arabe", "Éducation islamique", "Histoire-Géographie"],
+  "Contrôle Continu": ["Mathématiques", "Physique-Chimie", "Sciences de la Vie et de la Terre", "Philosophie", "Anglais"],
+  "Examen National": ["Mathématiques", "Physique-Chimie", "Sciences de la Vie et de la Terre", "Philosophie", "Anglais"]
+};
+
+function populateSubjects() {
+  const examType = gradeExamType.value;
+  const subjects = EXAM_SUBJECTS[examType] || [];
+  
+  gradeSubject.innerHTML = "";
+  subjects.forEach(sub => {
+    const opt = document.createElement("option");
+    opt.value = sub;
+    opt.textContent = sub;
+    gradeSubject.appendChild(opt);
+  });
+  
+  updateGradeInputFromStudent();
+}
+
+function updateGradeInputFromStudent() {
+  if (!currentStudent) return;
+  const examType = gradeExamType.value;
+  const subjectName = gradeSubject.value;
+  
+  const results = currentStudent.subject_results || [];
+  const found = results.find(r => r.subject_name === subjectName && r.exam_type === examType);
+  if (found && !isNaN(parseFloat(found.grade))) {
+    gradeValue.value = parseFloat(found.grade);
+  } else {
+    gradeValue.value = "";
+  }
+}
+
+function updateExamTypeOptions(student) {
+  const is1Bac = student && student.level === '1ère Bac';
+  const nationalOpt = Array.from(gradeExamType.options).find(opt => opt.value === "Examen National");
+  if (nationalOpt) {
+    if (is1Bac) {
+      nationalOpt.disabled = true;
+      nationalOpt.style.display = "none";
+    } else {
+      nationalOpt.disabled = false;
+      nationalOpt.style.display = "";
+    }
+  }
+}
+
+// ── Modal Actions ──────────────────────────────────────────────────────────
 function openEditModal(student) {
   currentStudent = student;
   modalStudentName.textContent = student.full_name || "—";
@@ -199,26 +260,13 @@ function openEditModal(student) {
   
   hideAlerts();
 
-  // Reset inputs
-  gradeMath.value = "";
-  gradePhys.value = "";
-  gradeSvt.value = "";
-  gradePhilo.value = "";
-
-  // Prefill grades if they exist in student.subject_results
-  const subjects = student.subject_results || [];
-  subjects.forEach(sub => {
-    const gradeVal = parseFloat(sub.grade);
-    if (!isNaN(gradeVal)) {
-      if (sub.subject_name === "Mathématiques") gradeMath.value = gradeVal;
-      else if (sub.subject_name === "Physique-Chimie") gradePhys.value = gradeVal;
-      else if (sub.subject_name === "Sciences de la Vie et de la Terre") gradeSvt.value = gradeVal;
-      else if (sub.subject_name === "Philosophie") gradePhilo.value = gradeVal;
-    }
-  });
+  // Setup dropdown values
+  updateExamTypeOptions(student);
+  gradeExamType.value = "Contrôle Continu";
+  populateSubjects();
 
   editModalBackdrop.style.display = "flex";
-  gradeMath.focus();
+  gradeValue.focus();
 }
 
 function closeModal() {
@@ -241,82 +289,61 @@ editGradeForm.addEventListener("submit", async function (e) {
 
   if (!currentStudent) return;
 
-  const subjectsInputMap = [
-    { name: "Mathématiques", element: gradeMath },
-    { name: "Physique-Chimie", element: gradePhys },
-    { name: "Sciences de la Vie et de la Terre", element: gradeSvt },
-    { name: "Philosophie", element: gradePhilo }
-  ];
+  const examType = gradeExamType.value;
+  const subjectName = gradeSubject.value;
+  const valString = gradeValue.value.trim();
 
-  // Parse and validate fields
-  const updates = [];
-  for (const item of subjectsInputMap) {
-    const valString = item.element.value.trim();
-    if (!valString) {
-      showModalError(`Please provide a grade for ${item.name}.`);
-      return;
-    }
-
-    const val = parseFloat(valString);
-    if (isNaN(val) || val < 0 || val > 20) {
-      showModalError(`Grade for ${item.name} must be a number between 0 and 20.`);
-      return;
-    }
-
-    // Check if changed
-    const currentResults = currentStudent.subject_results || [];
-    const oldResult = currentResults.find(r => r.subject_name === item.name);
-    const oldVal = oldResult ? parseFloat(oldResult.grade) : null;
-
-    if (oldVal === null || oldVal !== val) {
-      updates.push({
-        subject_name: item.name,
-        grade: val
-      });
-    }
+  if (!valString) {
+    showModalError("Please provide a grade.");
+    return;
   }
 
-  // If there are updates, perform requests
-  if (updates.length > 0) {
+  const val = parseFloat(valString);
+  if (isNaN(val) || val < 0 || val > 20) {
+    showModalError("Grade must be a number between 0 and 20.");
+    return;
+  }
+
+  // Check if changed
+  const currentResults = currentStudent.subject_results || [];
+  const oldResult = currentResults.find(r => r.subject_name === subjectName && r.exam_type === examType);
+  const oldVal = oldResult ? parseFloat(oldResult.grade) : null;
+
+  if (oldVal === null || oldVal !== val) {
     setModalLoading(true);
 
     try {
-      // Execute all updates in parallel
-      const updatePromises = updates.map(async (upd) => {
-        const response = await fetch(`${API_BASE_URL}/teacher/grades`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${accessToken}`
-          },
-          body: JSON.stringify({
-            code_massar: currentStudent.code_massar,
-            subject_name: upd.subject_name,
-            grade: upd.grade
-          })
-        });
-
-        if (response.status === 401 || response.status === 403) {
-          handleSessionExpiry();
-          throw new Error("Session expired. Please log in again.");
-        }
-
-        let resData = {};
-        try {
-          resData = await response.json();
-        } catch (_) {
-          // Ignore
-        }
-
-        if (!response.ok) {
-          throw new Error(resData.error || `Failed to update grade for ${upd.subject_name}.`);
-        }
-
-        return resData;
+      const response = await fetch(`${API_BASE_URL}/teacher/grades`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${accessToken}`
+        },
+        body: JSON.stringify({
+          code_massar: currentStudent.code_massar,
+          subject_name: subjectName,
+          exam_type: examType,
+          grade: val
+        })
       });
 
-      await Promise.all(updatePromises);
-      showSuccess(`Successfully updated grades for ${currentStudent.full_name}.`);
+      if (response.status === 401 || response.status === 403) {
+        handleSessionExpiry();
+        throw new Error("Session expired. Please log in again.");
+      }
+
+      let resData = {};
+      try {
+        resData = await response.json();
+      } catch (_) {
+        // Ignore
+      }
+
+      if (!response.ok) {
+        throw new Error(resData.error || "Failed to update grade.");
+      }
+
+      showSuccess(`Successfully updated ${subjectName} (${examType}) grade for ${currentStudent.full_name} to ${val.toFixed(2)}.`);
       closeModal();
       await loadStudents(); // Reload main table
     } catch (err) {
@@ -330,6 +357,10 @@ editGradeForm.addEventListener("submit", async function (e) {
     closeModal();
   }
 });
+
+// Setup dynamic dropdown event listeners
+gradeExamType.addEventListener("change", populateSubjects);
+gradeSubject.addEventListener("change", updateGradeInputFromStudent);
 
 // ── Event Listeners ────────────────────────────────────────────────────────
 modalCloseBtn.addEventListener("click", closeModal);

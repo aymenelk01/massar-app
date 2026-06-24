@@ -108,6 +108,14 @@
               </svg>
               Generate Diplomas
             </button>
+
+            <div style="margin-left: auto; display: flex; align-items: center; gap: 8px;" id="filter-level-container">
+              <label for="filter-level" style="font-size: 0.9rem; font-weight: 500; color: var(--neutral-700);">Niveau :</label>
+              <select id="filter-level" class="form-input" style="width: auto; padding: 4px 12px; height: 38px; min-width: 140px; margin-bottom: 0;">
+                <option value="2ème Bac">2ème Bac</option>
+                <option value="1ère Bac">1ère Bac</option>
+              </select>
+            </div>
           </div>
 
           <!-- Students list table -->
@@ -120,6 +128,7 @@
                     <th scope="col">Student Full Name</th>
                     <th scope="col">Email</th>
                     <th scope="col">Phone</th>
+                    <th scope="col" style="text-align: center;">Niveau</th>
                     <th scope="col" style="text-align: center;">Exam Status</th>
                     <th scope="col" style="text-align: center;">Diploma</th>
                     <th scope="col" style="text-align: center;">Account</th>
@@ -204,6 +213,22 @@
           <div class="form-group">
             <label class="form-label" for="student-phone">Phone Number <span class="required">*</span></label>
             <input class="form-input" type="tel" id="student-phone" required placeholder="e.g. +212661234567" />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="student-branch">Branch / Filière <span class="required">*</span></label>
+            <select class="form-input" id="student-branch" required>
+              <option value="Sciences Physiques">Sciences Physiques</option>
+              <option value="Sciences Mathématiques A">Sciences Mathématiques A</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="student-level">Niveau <span class="required">*</span></label>
+            <select class="form-input" id="student-level" required>
+              <option value="2ème Bac">2ème Bac</option>
+              <option value="1ère Bac">1ère Bac</option>
+            </select>
           </div>
 
           <div class="modal-footer">

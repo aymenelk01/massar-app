@@ -494,6 +494,12 @@ body {
   border: 1px solid #f5c6cb;
 }
 
+.result-badge--pending {
+  background: #fff3cd;
+  color: #856404;
+  border: 1px solid #ffc107;
+}
+
 .divider {
   border: 0;
   border-top: 1px solid var(--neutral-100);
@@ -867,6 +873,16 @@ body {
 .badge-status--ajourne {
   background: #f8d7da;
   color: #721c24;
+}
+
+.badge-status--pending {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.badge-status--info {
+  background: #d1ecf1;
+  color: #0c5460;
 }
 
 @media (max-width: 580px) {
