@@ -640,21 +640,38 @@ app.get("/api/teacher/students", authMiddleware, teacherMiddleware, async (req, 
 /**
  * ROUTE 6: POST /teacher/grades
  * Protected route for teachers to input/edit student grades.
- * Body: { code_massar, subject_name, grade }
+ * Body: { code_massar, grades: [{ subject_name, exam_type, grade }] } or single { code_massar, subject_name, exam_type, grade }
  */
 app.post("/api/teacher/grades", authMiddleware, teacherMiddleware, async (req, res) => {
-  const { code_massar, subject_name, exam_type, grade } = req.body;
+  const { code_massar, subject_name, exam_type, grade, grades } = req.body;
 
-  if (!code_massar || !subject_name || !exam_type || typeof grade === "undefined") {
-    return res.status(400).json({ error: "Missing required parameters: code_massar, subject_name, exam_type, and grade are required" });
-  }
-
-  const parsedGrade = parseFloat(grade);
-  if (isNaN(parsedGrade) || parsedGrade < 0 || parsedGrade > 20) {
-    return res.status(400).json({ error: "Grade must be a valid number between 0 and 20" });
+  if (!code_massar) {
+    return res.status(400).json({ error: "Missing required parameter: code_massar is required" });
   }
 
   const normalizedCode = code_massar.trim().toUpperCase();
+
+  // Support both bulk updates (grades array) and single updates
+  let gradesToUpdate = [];
+  if (Array.isArray(grades)) {
+    gradesToUpdate = grades;
+  } else {
+    if (!subject_name || !exam_type || typeof grade === "undefined") {
+      return res.status(400).json({ error: "Missing required parameters: subject_name, exam_type, and grade are required for single update" });
+    }
+    gradesToUpdate = [{ subject_name, exam_type, grade }];
+  }
+
+  // Validate all grades first
+  for (const g of gradesToUpdate) {
+    if (!g.subject_name || !g.exam_type || typeof g.grade === "undefined" || g.grade === null) {
+      return res.status(400).json({ error: "Each grade entry must contain subject_name, exam_type, and grade" });
+    }
+    const parsedGrade = parseFloat(g.grade);
+    if (isNaN(parsedGrade) || parsedGrade < 0 || parsedGrade > 20) {
+      return res.status(400).json({ error: `Grade for ${g.subject_name} (${g.exam_type}) must be a valid number between 0 and 20` });
+    }
+  }
 
   try {
     const db = await getDbPool();
@@ -673,24 +690,27 @@ app.post("/api/teacher/grades", authMiddleware, teacherMiddleware, async (req, r
     const studentBranch = students[0].branch;
     const studentLevel = students[0].level || '2ème Bac';
 
-    // 2. Check if grade exists
-    const [grades] = await db.query(
-      "SELECT id FROM subject_results WHERE student_id = ? AND subject_name = ? AND exam_type = ?",
-      [studentId, subject_name, exam_type]
-    );
+    // 2. Perform updates/inserts for all grades
+    for (const g of gradesToUpdate) {
+      const parsedGrade = parseFloat(g.grade);
+      const [existing] = await db.query(
+        "SELECT id FROM subject_results WHERE student_id = ? AND subject_name = ? AND exam_type = ?",
+        [studentId, g.subject_name, g.exam_type]
+      );
 
-    if (grades.length > 0) {
-      // Update
-      await db.query(
-        "UPDATE subject_results SET grade = ? WHERE student_id = ? AND subject_name = ? AND exam_type = ?",
-        [parsedGrade, studentId, subject_name, exam_type]
-      );
-    } else {
-      // Insert
-      await db.query(
-        "INSERT INTO subject_results (student_id, subject_name, exam_type, grade) VALUES (?, ?, ?, ?)",
-        [studentId, subject_name, exam_type, parsedGrade]
-      );
+      if (existing.length > 0) {
+        // Update
+        await db.query(
+          "UPDATE subject_results SET grade = ? WHERE student_id = ? AND subject_name = ? AND exam_type = ?",
+          [parsedGrade, studentId, g.subject_name, g.exam_type]
+        );
+      } else {
+        // Insert
+        await db.query(
+          "INSERT INTO subject_results (student_id, subject_name, exam_type, grade) VALUES (?, ?, ?, ?)",
+          [studentId, g.subject_name, g.exam_type, parsedGrade]
+        );
+      }
     }
 
     // 3. Recalculate average and update student status (Admis vs Ajourné)
@@ -725,16 +745,14 @@ app.post("/api/teacher/grades", authMiddleware, teacherMiddleware, async (req, r
     }
 
     return res.status(200).json({
-      message: "Grade successfully updated",
+      message: "Grades successfully updated",
       student_code: normalizedCode,
-      subject: subject_name,
-      exam_type: exam_type,
-      grade: parsedGrade,
+      updated_count: gradesToUpdate.length,
       new_averages: averages
     });
   } catch (error) {
-    console.error(`Error updating grade for student ${normalizedCode}:`, error.message);
-    return res.status(500).json({ error: "Failed to update grade in database" });
+    console.error(`Error updating grades for student ${normalizedCode}:`, error.message);
+    return res.status(500).json({ error: "Failed to update grades in database" });
   }
 });
 

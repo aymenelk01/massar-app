@@ -99,9 +99,9 @@
 
     <!-- Modal backdrop for editing grades (hidden by default) -->
     <div id="edit-modal-backdrop" class="modal-backdrop" style="display: none;">
-      <div class="modal">
+      <div class="modal modal--grades" style="max-width: 650px;">
         <div class="modal-header">
-          <h3 class="modal-title">Edit Grades</h3>
+          <h3 class="modal-title">Edit Student Grades</h3>
           <button class="modal-close" id="modal-close-btn" type="button" aria-label="Close modal">&times;</button>
         </div>
         
@@ -113,40 +113,41 @@
         </div>
 
         <form id="edit-grade-form" class="form">
-          <div class="form-group">
-            <label class="form-label" style="font-weight: bold; color: var(--neutral-600);">Student:</label>
-            <span id="modal-student-name" style="font-size: 1.1rem; font-weight: bold; color: var(--neutral-800);">—</span>
-            <span id="modal-student-code" style="font-size: 0.85rem; color: var(--neutral-600);">—</span>
+          <div class="form-group" style="margin-bottom: 15px;">
+            <label class="form-label" style="font-weight: bold; color: var(--neutral-600); display: inline;">Student:</label>
+            <span id="modal-student-name" style="font-size: 1.1rem; font-weight: bold; color: var(--neutral-800); margin-left: 6px;">—</span>
+            <span id="modal-student-code" style="font-size: 0.9rem; color: var(--neutral-600);">—</span>
           </div>
 
-          <div class="divider" style="margin: 12px 0;"></div>
-
-          <!-- Moroccan Exam Component & Subject Selector -->
-          <div class="form-group">
-            <label class="form-label" for="grade-exam-type">Exam Type <span class="required">*</span></label>
-            <select class="form-input" id="grade-exam-type" required>
-              <option value="Contrôle Continu">Contrôle Continu</option>
-              <option value="Examen Régional">Examen Régional</option>
-              <option value="Examen National">Examen National</option>
-            </select>
+          <!-- Moroccan Exam Component Tabs -->
+          <div class="tab-container" id="modal-tab-container" style="margin-bottom: 20px;">
+            <button type="button" class="tab-btn tab-btn--active" data-tab="regional">Examen Régional</button>
+            <button type="button" class="tab-btn" data-tab="cc">Contrôle Continu</button>
+            <button type="button" class="tab-btn" data-tab="national" id="tab-national">Examen National</button>
           </div>
 
-          <div class="form-group">
-            <label class="form-label" for="grade-subject">Subject <span class="required">*</span></label>
-            <select class="form-input" id="grade-subject" required>
-              <!-- Populated dynamically by JS -->
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="grade-value">Grade / 20 <span class="required">*</span></label>
-            <input class="form-input grade-input" type="number" id="grade-value" step="0.25" min="0" max="20" required placeholder="0.00 to 20.00" />
+          <!-- Tab Content Panels -->
+          <div class="tab-panel-container" style="min-height: 250px; background: var(--neutral-100); padding: 20px; border-radius: var(--radius-md); border: 1px solid var(--neutral-200); margin-bottom: 20px;">
+            <!-- Regional Panel -->
+            <div class="modal-tab-panel" id="panel-regional">
+              <!-- Dynamically populated -->
+            </div>
+            
+            <!-- CC Panel -->
+            <div class="modal-tab-panel" id="panel-cc" style="display: none;">
+              <!-- Dynamically populated -->
+            </div>
+            
+            <!-- National Panel -->
+            <div class="modal-tab-panel" id="panel-national" style="display: none;">
+              <!-- Dynamically populated -->
+            </div>
           </div>
 
           <div class="modal-footer">
             <button class="btn btn--ghost" id="modal-cancel-btn" type="button">Cancel</button>
             <button class="btn btn--primary" id="modal-save-btn" type="submit">
-              <span id="save-btn-label">Save Changes</span>
+              <span id="save-btn-label">Save All Changes</span>
               <span id="save-btn-spinner" class="spinner" hidden aria-hidden="true"></span>
             </button>
           </div>

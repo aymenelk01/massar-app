@@ -26,9 +26,11 @@ const modalStudentCode  = document.getElementById("modal-student-code");
 const modalErrorAlert   = document.getElementById("modal-error-alert");
 const modalErrorText    = document.getElementById("modal-error-text");
 
-const gradeExamType     = document.getElementById("grade-exam-type");
-const gradeSubject      = document.getElementById("grade-subject");
-const gradeValue        = document.getElementById("grade-value");
+const tabNational       = document.getElementById("tab-national");
+const panelRegional     = document.getElementById("panel-regional");
+const panelCc           = document.getElementById("panel-cc");
+const panelNational     = document.getElementById("panel-national");
+const modalTabContainer = document.getElementById("modal-tab-container");
 
 const saveBtnLabel      = document.getElementById("save-btn-label");
 const saveBtnSpinner    = document.getElementById("save-btn-spinner");
@@ -201,58 +203,129 @@ function renderStudentsTable() {
   });
 }
 
-// ── Modal Actions ──────────────────────────────────────────────────────────
+// ── Modal Actions & Dynamic Form Generation ───────────────────────────────
 // A mapping of exam types to their respective Moroccan Baccalaureate subjects
 const EXAM_SUBJECTS = {
-  "Examen Régional": ["Français", "Langue arabe", "Éducation islamique", "Histoire-Géographie"],
-  "Contrôle Continu": ["Mathématiques", "Physique-Chimie", "Sciences de la Vie et de la Terre", "Philosophie", "Anglais"],
-  "Examen National": ["Mathématiques", "Physique-Chimie", "Sciences de la Vie et de la Terre", "Philosophie", "Anglais"]
+  "Examen Régional": [
+    { name: "Français", coefs: { "Sciences Physiques": 4, "Sciences Mathématiques A": 4 } },
+    { name: "Langue arabe", coefs: { "Sciences Physiques": 2, "Sciences Mathématiques A": 2 } },
+    { name: "Éducation islamique", coefs: { "Sciences Physiques": 2, "Sciences Mathématiques A": 2 } },
+    { name: "Histoire-Géographie", coefs: { "Sciences Physiques": 2, "Sciences Mathématiques A": 2 } }
+  ],
+  "Contrôle Continu": [
+    { name: "Mathématiques", coefs: { "Sciences Physiques": 7, "Sciences Mathématiques A": 9 } },
+    { name: "Physique-Chimie", coefs: { "Sciences Physiques": 7, "Sciences Mathématiques A": 7 } },
+    { name: "Sciences de la Vie et de la Terre", coefs: { "Sciences Physiques": 5, "Sciences Mathématiques A": 3 } },
+    { name: "Philosophie", coefs: { "Sciences Physiques": 2, "Sciences Mathématiques A": 2 } },
+    { name: "Anglais", coefs: { "Sciences Physiques": 2, "Sciences Mathématiques A": 2 } }
+  ],
+  "Examen National": [
+    { name: "Mathématiques", coefs: { "Sciences Physiques": 7, "Sciences Mathématiques A": 9 } },
+    { name: "Physique-Chimie", coefs: { "Sciences Physiques": 7, "Sciences Mathématiques A": 7 } },
+    { name: "Sciences de la Vie et de la Terre", coefs: { "Sciences Physiques": 5, "Sciences Mathématiques A": 3 } },
+    { name: "Philosophie", coefs: { "Sciences Physiques": 2, "Sciences Mathématiques A": 2 } },
+    { name: "Anglais", coefs: { "Sciences Physiques": 2, "Sciences Mathématiques A": 2 } }
+  ]
 };
 
-function populateSubjects() {
-  const examType = gradeExamType.value;
-  const subjects = EXAM_SUBJECTS[examType] || [];
-  
-  gradeSubject.innerHTML = "";
-  subjects.forEach(sub => {
-    const opt = document.createElement("option");
-    opt.value = sub;
-    opt.textContent = sub;
-    gradeSubject.appendChild(opt);
-  });
-  
-  updateGradeInputFromStudent();
+function getCoeff(examType, subjectName, branch) {
+  const list = EXAM_SUBJECTS[examType] || [];
+  const item = list.find(s => s.name === subjectName);
+  return item ? (item.coefs[branch] || 2) : 2;
 }
 
-function updateGradeInputFromStudent() {
-  if (!currentStudent) return;
-  const examType = gradeExamType.value;
-  const subjectName = gradeSubject.value;
-  
-  const results = currentStudent.subject_results || [];
-  const found = results.find(r => r.subject_name === subjectName && r.exam_type === examType);
-  if (found && !isNaN(parseFloat(found.grade))) {
-    gradeValue.value = parseFloat(found.grade);
+function generateGradeInputs() {
+  const branch = currentStudent.branch || "Sciences Physiques";
+  const is1Bac = currentStudent.level === "1ère Bac";
+
+  // 1. Regional Panel
+  renderPanelInputs(panelRegional, "Examen Régional", EXAM_SUBJECTS["Examen Régional"], branch);
+
+  // 2. CC Panel
+  renderPanelInputs(panelCc, "Contrôle Continu", EXAM_SUBJECTS["Contrôle Continu"], branch);
+
+  // 3. National Panel (if not 1ère Bac)
+  if (is1Bac) {
+    panelNational.innerHTML = `<div style="text-align: center; color: var(--neutral-600); padding: 20px;">L'Examen National n'est pas applicable pour les élèves de la 1ère Bac.</div>`;
+    tabNational.style.display = "none";
   } else {
-    gradeValue.value = "";
+    tabNational.style.display = "";
+    renderPanelInputs(panelNational, "Examen National", EXAM_SUBJECTS["Examen National"], branch);
   }
 }
 
-function updateExamTypeOptions(student) {
-  const is1Bac = student && student.level === '1ère Bac';
-  const nationalOpt = Array.from(gradeExamType.options).find(opt => opt.value === "Examen National");
-  if (nationalOpt) {
-    if (is1Bac) {
-      nationalOpt.disabled = true;
-      nationalOpt.style.display = "none";
-    } else {
-      nationalOpt.disabled = false;
-      nationalOpt.style.display = "";
-    }
-  }
+function renderPanelInputs(container, examType, subjects, branch) {
+  container.innerHTML = "";
+
+  const table = document.createElement("table");
+  table.className = "results-table";
+  table.style.width = "100%";
+  table.style.marginBottom = "0";
+
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th scope="col" style="text-align: left;">Matière</th>
+        <th scope="col" style="text-align: center; width: 100px;">Coefficient</th>
+        <th scope="col" style="text-align: right; width: 150px;">Note / 20</th>
+      </tr>
+    </thead>
+    <tbody>
+    </tbody>
+  `;
+
+  const tbody = table.querySelector("tbody");
+  const studentResults = currentStudent.subject_results || [];
+
+  subjects.forEach(subject => {
+    const coef = subject.coefs[branch] || 2;
+    const existing = studentResults.find(r => r.subject_name === subject.name && r.exam_type === examType);
+    const initialValue = (existing && !isNaN(parseFloat(existing.grade))) ? parseFloat(existing.grade).toFixed(2) : "";
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td style="text-align: left; font-weight: 500;">${subject.name}</td>
+      <td style="text-align: center; color: var(--neutral-600);">${coef}</td>
+      <td style="text-align: right;">
+        <input class="form-input grade-cell-input" 
+               type="number" 
+               step="0.25" 
+               min="0" 
+               max="20" 
+               placeholder="—" 
+               data-subject="${subject.name}" 
+               data-exam-type="${examType}" 
+               value="${initialValue}"
+               style="width: 110px; text-align: center; padding: 6px; font-weight: bold; border-radius: 6px; border: 1px solid var(--neutral-300);" />
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  container.appendChild(table);
 }
 
-// ── Modal Actions ──────────────────────────────────────────────────────────
+// ── Tab Event Handlers ──────────────────────────────────────────────────────
+function setupTabs() {
+  const tabs = modalTabContainer.querySelectorAll(".tab-btn");
+  tabs.forEach(tab => {
+    tab.addEventListener("click", () => {
+      // Deactivate all
+      tabs.forEach(t => t.classList.remove("tab-btn--active"));
+      panelRegional.style.display = "none";
+      panelCc.style.display = "none";
+      panelNational.style.display = "none";
+
+      // Activate clicked
+      tab.classList.add("tab-btn--active");
+      const target = tab.getAttribute("data-tab");
+      if (target === "regional") panelRegional.style.display = "block";
+      else if (target === "cc") panelCc.style.display = "block";
+      else if (target === "national") panelNational.style.display = "block";
+    });
+  });
+}
+
 function openEditModal(student) {
   currentStudent = student;
   modalStudentName.textContent = student.full_name || "—";
@@ -260,13 +333,18 @@ function openEditModal(student) {
   
   hideAlerts();
 
-  // Setup dropdown values
-  updateExamTypeOptions(student);
-  gradeExamType.value = "Contrôle Continu";
-  populateSubjects();
+  // Reset active tab to first tab
+  const tabs = modalTabContainer.querySelectorAll(".tab-btn");
+  tabs.forEach(t => t.classList.remove("tab-btn--active"));
+  tabs[0].classList.add("tab-btn--active");
+  panelRegional.style.display = "block";
+  panelCc.style.display = "none";
+  panelNational.style.display = "none";
+
+  // Generate Inputs
+  generateGradeInputs();
 
   editModalBackdrop.style.display = "flex";
-  gradeValue.focus();
 }
 
 function closeModal() {
@@ -278,89 +356,104 @@ function setModalLoading(loading) {
   modalSaveBtn.disabled = loading;
   modalCancelBtn.disabled = loading;
   modalCloseBtn.disabled = loading;
-  saveBtnLabel.textContent = loading ? "Saving..." : "Save Changes";
+  saveBtnLabel.textContent = loading ? "Saving Grades..." : "Save All Changes";
   saveBtnSpinner.hidden = !loading;
 }
 
-// ── Submit Edit Grade Form ──────────────────────────────────────────────────
+// ── Submit Bulk Edit Grade Form ─────────────────────────────────────────────
 editGradeForm.addEventListener("submit", async function (e) {
   e.preventDefault();
   modalErrorAlert.hidden = true;
 
   if (!currentStudent) return;
 
-  const examType = gradeExamType.value;
-  const subjectName = gradeSubject.value;
-  const valString = gradeValue.value.trim();
+  const inputs = Array.from(editGradeForm.querySelectorAll(".grade-cell-input"));
+  const updates = [];
+  let validationError = null;
 
-  if (!valString) {
-    showModalError("Please provide a grade.");
-    return;
-  }
-
-  const val = parseFloat(valString);
-  if (isNaN(val) || val < 0 || val > 20) {
-    showModalError("Grade must be a number between 0 and 20.");
-    return;
-  }
-
-  // Check if changed
-  const currentResults = currentStudent.subject_results || [];
-  const oldResult = currentResults.find(r => r.subject_name === subjectName && r.exam_type === examType);
-  const oldVal = oldResult ? parseFloat(oldResult.grade) : null;
-
-  if (oldVal === null || oldVal !== val) {
-    setModalLoading(true);
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/teacher/grades`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${accessToken}`
-        },
-        body: JSON.stringify({
-          code_massar: currentStudent.code_massar,
-          subject_name: subjectName,
-          exam_type: examType,
+  inputs.forEach(input => {
+    const valString = input.value.trim();
+    if (valString !== "") {
+      const val = parseFloat(valString);
+      if (isNaN(val) || val < 0 || val > 20) {
+        validationError = `Note pour ${input.getAttribute("data-subject")} (${input.getAttribute("data-exam-type")}) doit être comprise entre 0 et 20.`;
+      } else {
+        updates.push({
+          subject_name: input.getAttribute("data-subject"),
+          exam_type: input.getAttribute("data-exam-type"),
           grade: val
-        })
-      });
-
-      if (response.status === 401 || response.status === 403) {
-        handleSessionExpiry();
-        throw new Error("Session expired. Please log in again.");
+        });
       }
-
-      let resData = {};
-      try {
-        resData = await response.json();
-      } catch (_) {
-        // Ignore
-      }
-
-      if (!response.ok) {
-        throw new Error(resData.error || "Failed to update grade.");
-      }
-
-      showSuccess(`Successfully updated ${subjectName} (${examType}) grade for ${currentStudent.full_name} to ${val.toFixed(2)}.`);
-      closeModal();
-      await loadStudents(); // Reload main table
-    } catch (err) {
-      console.error("Error submitting grade updates:", err);
-      showModalError(err.message || "Failed to save grade updates. Please try again.");
-    } finally {
-      setModalLoading(false);
     }
-  } else {
-    // If no changes, just close the modal
+  });
+
+  if (validationError) {
+    showModalError(validationError);
+    return;
+  }
+
+  // Compare updates with current subject results to send only changed grades
+  const studentResults = currentStudent.subject_results || [];
+  const modifiedGrades = [];
+
+  updates.forEach(upd => {
+    const existing = studentResults.find(r => r.subject_name === upd.subject_name && r.exam_type === upd.exam_type);
+    const existingGrade = existing ? parseFloat(existing.grade) : null;
+    if (existingGrade === null || Math.abs(existingGrade - upd.grade) > 0.001) {
+      modifiedGrades.push(upd);
+    }
+  });
+
+  // If no changes, just close the modal
+  if (modifiedGrades.length === 0) {
     closeModal();
+    return;
+  }
+
+  setModalLoading(true);
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/teacher/grades`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${accessToken}`
+      },
+      body: JSON.stringify({
+        code_massar: currentStudent.code_massar,
+        grades: modifiedGrades
+      })
+    });
+
+    if (response.status === 401 || response.status === 403) {
+      handleSessionExpiry();
+      throw new Error("Session expired. Please log in again.");
+    }
+
+    let resData = {};
+    try {
+      resData = await response.json();
+    } catch (_) {
+      // Ignore
+    }
+
+    if (!response.ok) {
+      throw new Error(resData.error || "Failed to update grades.");
+    }
+
+    showSuccess(`Enregistrement réussi : ${modifiedGrades.length} notes ont été mises à jour pour l'élève ${currentStudent.full_name}.`);
+    closeModal();
+    await loadStudents(); // Reload main table
+  } catch (err) {
+    console.error("Error submitting grade updates:", err);
+    showModalError(err.message || "Failed to save grade updates. Please try again.");
+  } finally {
+    setModalLoading(false);
   }
 });
 
-// Setup dynamic dropdown event listeners
-gradeExamType.addEventListener("change", populateSubjects);
-gradeSubject.addEventListener("change", updateGradeInputFromStudent);
+// Setup tabs listener
+setupTabs();
 
 // ── Event Listeners ────────────────────────────────────────────────────────
 modalCloseBtn.addEventListener("click", closeModal);
