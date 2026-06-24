@@ -175,7 +175,7 @@ async function getDbPool() {
 /**
  * Rotates the pool every 14 minutes so the baked-in IAM token is always
  * fresh (tokens expire after 15 minutes). The old pool is ended gracefully
- * so any in-flight queries can drain before connections are closed.
+ * so any in-flight queries can drain before connections are closed
  */
 function schedulePoolRotation(dbHost, dbUsername, dbName) {
   // 14 minutes — 1 minute before the 15-minute IAM token expiry
