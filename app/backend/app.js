@@ -2179,6 +2179,236 @@ app.post("/api/guidance/generate", authMiddleware, async (req, res) => {
   }
 });
 
+/**
+ * ROUTE: POST /api/guidance/chat
+ * Protected route — students only (admins and teachers are rejected).
+ *
+ * Implements a stateless conversational AI advisor powered by Amazon Bedrock
+ * (amazon.nova-pro-v1:0 via ConverseCommand).  The client owns the full
+ * conversation history and replays it on every request; nothing is stored
+ * server-side.
+ *
+ * First-message behaviour:
+ *   When the client sends exactly one user message (i.e. the very first turn),
+ *   the server fetches the student's live grades from Aurora and prepends them
+ *   as a structured data block inside the system prompt.  This gives the model
+ *   authoritative, up-to-date context without the student having to provide it.
+ *
+ * Subsequent turns:
+ *   The client replays the full history (all prior user + assistant messages).
+ *   The system prompt is always rebuilt with the same grade context on every
+ *   call — the model never needs server-state memory.
+ *
+ * Request body: { messages: [{ role: "user"|"assistant", content: string }] }
+ * Response:     { reply: string }
+ */
+app.post("/api/guidance/chat", authMiddleware, async (req, res) => {
+  // ── 1. Identity resolution ─────────────────────────────────────────────
+  const cognitoUser = req.user.username || req.user["cognito:username"] || req.user.email || "";
+  const code_massar = cognitoUser.split("@")[0].toUpperCase();
+
+  if (!code_massar) {
+    return res.status(400).json({ error: "Invalid user claim format. Cannot parse code_massar." });
+  }
+
+  // ── 2. Students-only guard ─────────────────────────────────────────────
+  const groups = req.user["cognito:groups"] || [];
+  if (groups.includes("admins") || groups.includes("teachers")) {
+    return res.status(403).json({ error: "Forbidden: The AI chat advisor is only available to students." });
+  }
+
+  // ── 3. Validate request body ───────────────────────────────────────────
+  const { messages } = req.body;
+
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({ error: "Request body must contain a non-empty 'messages' array." });
+  }
+
+  // Validate each message has the required shape
+  for (const msg of messages) {
+    if (!msg.role || !["user", "assistant"].includes(msg.role) || typeof msg.content !== "string") {
+      return res.status(400).json({
+        error: "Each message must have a 'role' ('user' or 'assistant') and a 'content' string."
+      });
+    }
+  }
+
+  // The last message must be from the user (we are responding to it)
+  if (messages[messages.length - 1].role !== "user") {
+    return res.status(400).json({ error: "The last message in the conversation must be from the 'user'." });
+  }
+
+  try {
+    // ── 4. Fetch student grades from Aurora ────────────────────────────────
+    //   Always fetch on every request so the system prompt always reflects the
+    //   latest data (teachers may have updated grades between turns).
+    const db = await getDbPool();
+
+    const [students] = await db.query(
+      `SELECT id, full_name, branch, level, result,
+              average_regional, average_cc, average_national, average
+       FROM students WHERE code_massar = ?`,
+      [code_massar]
+    );
+
+    if (students.length === 0) {
+      return res.status(404).json({ error: "Student record not found." });
+    }
+
+    const student = students[0];
+
+    const [subjectRows] = await db.query(
+      `SELECT subject_name, exam_type, grade
+       FROM subject_results WHERE student_id = ?
+       ORDER BY exam_type, subject_name`,
+      [student.id]
+    );
+
+    // Build a human-readable grade table for the system prompt
+    const gradeLines = subjectRows.map(r =>
+      `  - ${r.subject_name} (${r.exam_type}): ${parseFloat(r.grade).toFixed(2)}/20`
+    );
+
+    const overall      = parseFloat(student.average          || 0);
+    const regionalAvg  = parseFloat(student.average_regional || 0);
+    const ccAvg        = parseFloat(student.average_cc       || 0);
+    const nationalAvg  = parseFloat(student.average_national || 0);
+    const branch       = student.branch || "Sciences Physiques";
+    const level        = student.level  || "2ème Bac";
+
+    const mention =
+      overall >= 16 ? "Très Bien" :
+      overall >= 14 ? "Bien"      :
+      overall >= 12 ? "Assez Bien":
+      overall >= 10 ? "Passable"  : "N/A";
+
+    // ── 5. Build the system prompt ─────────────────────────────────────────
+    const systemPromptText = [
+      "You are MassarAI, an expert Moroccan academic advisor specialising in the Baccalaureate system and higher-education orientation.",
+      "You are speaking directly with a student in a live chat session.",
+      "",
+      "════════════════════════════════════════════════════",
+      "STRICT BEHAVIOURAL RULES — never violate these:",
+      "════════════════════════════════════════════════════",
+      "1. Answer ONLY questions related to the student's academic situation, Baccalaureate results,",
+      "   university tracks, orientation, and future studies in Morocco.",
+      "2. If the student asks about anything outside this scope (politics, personal life, coding help,",
+      "   general knowledge, etc.), politely decline and redirect them to their academic questions.",
+      "3. NEVER perform mathematical calculations — all averages below are pre-computed and authoritative.",
+      "   Trust them as ground truth and never modify them.",
+      "4. Be honest and constructive: if scores are low, acknowledge it respectfully and always",
+      "   propose a concrete, realistic path forward.",
+      "5. Be specific: cite real Moroccan schools, concours names, and orientation platforms",
+      "   (cursussup.gov.ma, tawjihi.ma, bac.men.gov.ma).",
+      "6. Keep replies concise and conversational — this is a chat, not a report.",
+      "   Use short paragraphs or bullet points when listing options.",
+      "7. Do NOT repeat the student's full grade table back to them unless they explicitly ask.",
+      "8. Do NOT invent schools, thresholds, or requirements not grounded in your knowledge.",
+      "",
+      "════════════════════════════════════════════════════",
+      "STUDENT'S ACADEMIC RECORD (pre-validated, authoritative):",
+      "════════════════════════════════════════════════════",
+      `Name:    ${student.full_name}`,
+      `Branch:  ${branch}`,
+      `Level:   ${level}`,
+      `Result:  ${student.result}`,
+      `Mention: ${mention}`,
+      "",
+      "Averages (formula: 25% Régional + 25% CC + 50% National):",
+      `  Examen Régional:  ${regionalAvg.toFixed(2)}/20`,
+      `  Contrôle Continu: ${ccAvg.toFixed(2)}/20`,
+      `  Examen National:  ${nationalAvg.toFixed(2)}/20`,
+      `  Moyenne Générale: ${overall.toFixed(2)}/20`,
+      "",
+      "Subject grades:",
+      ...(gradeLines.length > 0 ? gradeLines : ["  (No subject grades recorded yet.)"]),
+      "",
+      "════════════════════════════════════════════════════",
+      "MOROCCAN HIGHER EDUCATION QUICK REFERENCE:",
+      "════════════════════════════════════════════════════",
+      "- CPGE (Grandes Écoles prep): ≥ 14/20 overall, Maths ≥ 14, Physics ≥ 12",
+      "- ENSA network (integrated engineering, 16 schools): ≥ 12/20, Maths ≥ 12",
+      "- Medicine/Pharmacy (FMP concours): ≥ 14/20 overall, SVT ≥ 14, Physics ≥ 12 (competitive realistically 15+)",
+      "- ENCG (management, 17 campuses): ≥ 12/20 overall",
+      "- FST (applied sciences faculties): ≥ 11/20, Maths or Physics ≥ 10",
+      "- EST (2-year DUT technology): ≥ 10/20 overall",
+      "- FS (fundamental sciences, near open-access): ≥ 10/20",
+      "- FSJES (law, economics — open access): ≥ 10/20",
+      "- OFPPT/ISTA/BTS (vocational): ≥ 10/20 in relevant subjects",
+      "- Rattrapage eligible: result = Ajourné AND overall ≥ 8/20",
+      "- Key platforms: cursussup.gov.ma, tawjihi.ma, bac.men.gov.ma",
+    ].join("\n");
+
+    // ── 6. Build the Bedrock messages array ────────────────────────────────
+    //   Map the client history to the Bedrock ConverseCommand format:
+    //   each message content is an array of text blocks.
+    const bedrockMessages = messages.map(msg => ({
+      role: msg.role,
+      content: [{ text: msg.content }]
+    }));
+
+    // ── 7. Resolve cross-region inference profile ID ───────────────────────
+    let modelId;
+    const currentRegion = process.env.AWS_REGION || "eu-south-1";
+    if (currentRegion.startsWith("us-")) {
+      modelId = "us.amazon.nova-pro-v1:0";
+    } else if (currentRegion.startsWith("eu-")) {
+      modelId = "eu.amazon.nova-pro-v1:0";
+    } else if (currentRegion.startsWith("ap-")) {
+      modelId = "ap.amazon.nova-pro-v1:0";
+    } else {
+      modelId = "us.amazon.nova-pro-v1:0"; // default cross-region fallback
+    }
+
+    // ── 8. Call Amazon Bedrock ─────────────────────────────────────────────
+    const bedrockResponse = await bedrockClient.send(
+      new ConverseCommand({
+        modelId,
+        system: [{ text: systemPromptText }],
+        messages: bedrockMessages,
+        inferenceConfig: {
+          maxTokens: 1024,
+          temperature: 0.5,
+          topP: 0.9
+        }
+      })
+    );
+
+    // ── 9. Extract and return the assistant's reply ───────────────────────
+    const outputBlocks = bedrockResponse.output?.message?.content ?? [];
+    const replyText = outputBlocks
+      .filter(block => block.text)
+      .map(block => block.text)
+      .join("\n")
+      .trim();
+
+    if (!replyText) {
+      console.error(`[guidance/chat] Bedrock returned empty content for student ${code_massar}`);
+      return res.status(502).json({ error: "The AI advisor returned an empty response. Please try again." });
+    }
+
+    console.log(`[guidance/chat] Reply generated for student ${code_massar} (turn ${messages.length})`);
+
+    return res.status(200).json({ reply: replyText });
+
+  } catch (error) {
+    if (error.name === "AccessDeniedException" || error.$metadata?.httpStatusCode === 403) {
+      console.error(`[guidance/chat] Bedrock access denied for student ${code_massar}:`, error.message);
+      return res.status(503).json({ error: "The AI advisor service is not accessible. Please contact your administrator." });
+    }
+    if (error.name === "ValidationException") {
+      console.error(`[guidance/chat] Bedrock validation error for student ${code_massar}:`, error.message);
+      return res.status(400).json({ error: "Could not process the chat request. Please try again." });
+    }
+    if (error.name === "ThrottlingException" || error.$metadata?.httpStatusCode === 429) {
+      console.warn(`[guidance/chat] Bedrock throttled for student ${code_massar}`);
+      return res.status(429).json({ error: "The AI advisor is temporarily busy. Please wait a moment and try again." });
+    }
+    console.error(`[guidance/chat] Unexpected error for student ${code_massar}:`, error.message);
+    return res.status(500).json({ error: "An unexpected error occurred. Please try again." });
+  }
+});
+
 // Start Server listening on port 3000 (required by AWS target group)
 app.listen(PORT, () => {
   console.log(`Moroccan Ministry of Education (Massar Mock Portal) running on port ${PORT}`);

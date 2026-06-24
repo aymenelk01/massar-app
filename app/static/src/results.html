@@ -144,30 +144,43 @@
               You can print this page or save as PDF by pressing Ctrl + P
             </p>
 
-            <!-- AI Guidance Section -->
+            <!-- AI Guidance & Advisor Section -->
             <div id="guidance-section" style="margin-top: 32px; margin-bottom: 8px;">
               <div style="background: linear-gradient(135deg, #e8f0fe, #f0e8fe); border: 1px solid #c5d1f0; border-radius: 12px; padding: 24px; text-align: center;">
                 <div style="display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 8px;">
                   <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#3b5bdb" stroke-width="2" aria-hidden="true">
                     <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"/><path d="M12 8v4m0 4h.01"/>
                   </svg>
-                  <h2 style="font-size: 1.1rem; font-weight: 700; color: #3b5bdb; margin: 0;">AI Academic Guidance</h2>
+                  <h2 style="font-size: 1.1rem; font-weight: 700; color: #3b5bdb; margin: 0;">AI Academic Guidance & Advisor</h2>
                 </div>
                 <p style="font-size: 0.9rem; color: #4a4a6a; margin-bottom: 18px; line-height: 1.5;">
-                  Get a personalized academic guidance report powered by Amazon Bedrock — including higher education pathway recommendations tailored to your results.
+                  Get a personalized, comprehensive academic guidance report or start a live interactive chat with MassarAI to discuss your Baccalaureate results, university options, and orientation pathways.
                 </p>
-                <button id="guidance-btn" type="button" aria-label="Generate my academic guidance report"
-                  style="display: inline-flex; align-items: center; gap: 8px; background: #3b5bdb; color: #fff; border: none; border-radius: 8px; padding: 12px 28px; font-size: 0.95rem; font-weight: 600; cursor: pointer; transition: background 160ms ease; font-family: inherit;">
-                  <svg id="guidance-btn-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
-                  </svg>
-                  <svg id="guidance-btn-spinner" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true" hidden
-                    style="animation: spin 0.8s linear infinite;">
-                    <circle cx="12" cy="12" r="10" stroke-opacity="0.25"/>
-                    <path d="M12 2a10 10 0 0 1 10 10" stroke-opacity="1"/>
-                  </svg>
-                  <span id="guidance-btn-label">Generate Guidance Report</span>
-                </button>
+                <div style="display: flex; flex-wrap: wrap; justify-content: center; gap: 12px;">
+                  <!-- Generate report button -->
+                  <button id="guidance-btn" type="button" aria-label="Generate my academic guidance report"
+                    style="display: inline-flex; align-items: center; gap: 8px; background: #6741d9; color: #fff; border: none; border-radius: 8px; padding: 12px 24px; font-size: 0.95rem; font-weight: 600; cursor: pointer; transition: background 160ms ease; font-family: inherit;">
+                    <svg id="guidance-btn-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                      <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+                    </svg>
+                    <svg id="guidance-btn-spinner" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true" hidden
+                      style="animation: spin 0.8s linear infinite;">
+                      <circle cx="12" cy="12" r="10" stroke-opacity="0.25"/>
+                      <path d="M12 2a10 10 0 0 1 10 10" stroke-opacity="1"/>
+                    </svg>
+                    <span id="guidance-btn-label">Generate Guidance Report</span>
+                  </button>
+
+                  <!-- Chat with advisor button -->
+                  <button id="open-chat-cta" type="button" aria-label="Open MassarAI chat advisor"
+                    style="display: inline-flex; align-items: center; gap: 8px; background: #3b5bdb; color: #fff; border: none; border-radius: 8px; padding: 12px 24px; font-size: 0.95rem; font-weight: 600; cursor: pointer; transition: background 160ms ease; font-family: inherit;">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                    </svg>
+                    Chat with MassarAI
+                  </button>
+                </div>
+                
                 <div id="guidance-error" role="alert" hidden
                   style="margin-top: 14px; background: #fff0f0; border: 1px solid #ffc9c9; border-radius: 8px; padding: 10px 14px; color: #c92a2a; font-size: 0.875rem; text-align: left;">
                 </div>
@@ -178,6 +191,92 @@
 
       </div>
     </main>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         Floating AI Chat Widget — MassarAI Academic Advisor
+         Fixed FAB button + slide-up panel
+    ═══════════════════════════════════════════════════════════ -->
+
+    <!-- FAB launcher -->
+    <button id="chat-fab" type="button" aria-label="Open MassarAI chat advisor" aria-expanded="false">
+      <!-- Chat icon (shown when closed) -->
+      <svg class="fab-icon" viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="#fff" stroke-width="2" aria-hidden="true">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+      </svg>
+      <!-- Close icon (shown when open) -->
+      <svg class="fab-close" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" stroke-width="2.5" aria-hidden="true">
+        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+
+    <!-- Chat panel -->
+    <div id="chat-panel" role="dialog" aria-modal="true" aria-label="MassarAI Academic Advisor Chat">
+
+      <!-- Header -->
+      <div class="chat-header">
+        <div class="chat-header__avatar">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#fff" stroke-width="2" aria-hidden="true">
+            <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"/>
+            <path d="M12 16v-4m0-4h.01"/>
+          </svg>
+        </div>
+        <div class="chat-header__info">
+          <div class="chat-header__name">MassarAI — Academic Advisor</div>
+          <div class="chat-header__status">Expert in Moroccan Higher Education</div>
+        </div>
+        <!-- Clear history -->
+        <button id="chat-clear-btn" type="button" title="Clear conversation" aria-label="Clear conversation history">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+            <path d="M10 11v6m4-6v6"/>
+            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+          </svg>
+        </button>
+        <!-- Close -->
+        <button class="chat-header__close" id="chat-panel-close" type="button" aria-label="Close chat">✕</button>
+      </div>
+
+      <!-- Messages scroll area -->
+      <div class="chat-messages" id="chat-messages" aria-live="polite" aria-atomic="false">
+        <!-- Empty / welcome state -->
+        <div class="chat-empty" id="chat-empty">
+          <div class="chat-empty__icon">
+            <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#6741d9" stroke-width="1.8" aria-hidden="true">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+          </div>
+          <div class="chat-empty__title">Hello! I'm MassarAI 🇲🇦</div>
+          <p class="chat-empty__subtitle">Ask me anything about your Baccalaureate results, university tracks, or higher-education pathways in Morocco.</p>
+        </div>
+      </div>
+
+      <!-- Suggested prompts (hidden after first message) -->
+      <div class="chat-suggestions" id="chat-suggestions">
+        <button class="chat-suggestion-btn" data-prompt="What universities can I apply to with my results?">Universities I can apply to?</button>
+        <button class="chat-suggestion-btn" data-prompt="Am I eligible for CPGE?">Am I eligible for CPGE?</button>
+        <button class="chat-suggestion-btn" data-prompt="What are my chances for medicine?">Chances for medicine?</button>
+        <button class="chat-suggestion-btn" data-prompt="Explain my Baccalaureate mention.">My mention explained</button>
+        <button class="chat-suggestion-btn" data-prompt="What should I do if I failed?">What if I failed?</button>
+      </div>
+
+      <!-- Input row -->
+      <div class="chat-input-row">
+        <textarea
+          id="chat-input"
+          rows="1"
+          placeholder="Ask MassarAI anything about your results…"
+          aria-label="Type your message"
+          maxlength="600"
+        ></textarea>
+        <button id="chat-send-btn" type="button" aria-label="Send message" disabled>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#fff" stroke-width="2.5" aria-hidden="true">
+            <line x1="22" y1="2" x2="11" y2="13"/>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+        </button>
+      </div>
+    </div>
 
     <!-- AI Guidance Modal -->
     <div id="guidance-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="guidance-modal-title"

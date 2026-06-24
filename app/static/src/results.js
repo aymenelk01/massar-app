@@ -172,7 +172,7 @@ async function loadResults() {
         const section = document.createElement("div");
         section.className = "table-wrapper";
         section.style.marginBottom = "24px";
-        
+
         let titleColor = "var(--neutral-800)";
         if (type === "Examen Régional") titleColor = "#2980b9";
         else if (type === "Contrôle Continu") titleColor = "#8e44ad";
@@ -296,14 +296,340 @@ if (downloadDiplomaBtn) {
   });
 }
 
-// ── Guidance Report Logic ────────────────────────────────────
+/* ============================================================
+   AI Chat Widget — MassarAI Academic Advisor
+   POST /api/guidance/chat  (stateless — client owns full history)
+   ============================================================ */
 
-// Inject spinner keyframe into the document once
-(function injectSpinnerKeyframe() {
-  const style = document.createElement("style");
-  style.textContent = `@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`;
-  document.head.appendChild(style);
-})();
+// ── DOM refs ─────────────────────────────────────────────────
+const chatFab         = document.getElementById("chat-fab");
+const chatPanel       = document.getElementById("chat-panel");
+const chatPanelClose  = document.getElementById("chat-panel-close");
+const chatMessages    = document.getElementById("chat-messages");
+const chatSuggestions = document.getElementById("chat-suggestions");
+const chatInput       = document.getElementById("chat-input");
+const chatSendBtn     = document.getElementById("chat-send-btn");
+const chatClearBtn    = document.getElementById("chat-clear-btn");
+const openChatCta     = document.getElementById("open-chat-cta");
+
+// In-memory conversation history (never stored server-side)
+// Each entry: { role: "user"|"assistant", content: string }
+let chatHistory = [];
+let chatIsOpen  = false;
+let chatBusy    = false;
+
+// ── Panel toggle ─────────────────────────────────────────────
+function openChat() {
+  chatIsOpen = true;
+  chatPanel.classList.add("open");
+  chatFab.classList.add("open");
+  chatFab.setAttribute("aria-expanded", "true");
+  // Remove unread badge if present
+  const badge = chatFab.querySelector(".chat-badge");
+  if (badge) badge.remove();
+  // Auto-focus input after animation
+  setTimeout(() => chatInput.focus(), 220);
+}
+
+function closeChat() {
+  chatIsOpen = false;
+  chatPanel.classList.remove("open");
+  chatFab.classList.remove("open");
+  chatFab.setAttribute("aria-expanded", "false");
+}
+
+function toggleChat() {
+  chatIsOpen ? closeChat() : openChat();
+}
+
+if (chatFab)        chatFab.addEventListener("click", toggleChat);
+if (chatPanelClose) chatPanelClose.addEventListener("click", closeChat);
+if (openChatCta)    openChatCta.addEventListener("click", openChat);
+
+// Close on Escape key
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && chatIsOpen) closeChat();
+});
+
+// ── Minimal Markdown → safe HTML (handles what Nova Pro outputs) ──
+function renderChatMarkdown(md) {
+  return md
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .split("\n")
+    .map(line => {
+      if (line.startsWith("## "))  return `<h3 style="font-size:0.92rem;font-weight:700;color:#3b5bdb;margin:10px 0 4px;">${line.slice(3)}</h3>`;
+      if (line.startsWith("### ")) return `<h4 style="font-size:0.88rem;font-weight:600;margin:8px 0 3px;">${line.slice(4)}</h4>`;
+      if (/^\s*[-*•] /.test(line)) {
+        const text = line.replace(/^\s*[-*•] /, "").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+        return `<li>${text}</li>`;
+      }
+      const withBold = line.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+      if (withBold.trim() === "") return "<br/>";
+      return `<p style="margin:3px 0;">${withBold}</p>`;
+    })
+    .join("\n")
+    .replace(/(<li>[\s\S]*?<\/li>\s*)+/g, m => `<ul style="padding-left:16px;margin:4px 0;">${m}</ul>`);
+}
+
+function escapeHtml(str) {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+// ── Format timestamp ─────────────────────────────────────────
+function formatTime(date) {
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+// ── Append a message bubble ──────────────────────────────────
+function appendMessage(role, content) {
+  // Hide empty state on first real message
+  const emptyEl = document.getElementById("chat-empty");
+  if (emptyEl) emptyEl.style.display = "none";
+
+  const wrapper = document.createElement("div");
+  wrapper.className = `chat-msg chat-msg--${role}`;
+
+  const avatar = document.createElement("div");
+  avatar.className = "chat-msg__avatar";
+  avatar.textContent = role === "assistant" ? "AI" : "You";
+  avatar.setAttribute("aria-hidden", "true");
+
+  const bubble = document.createElement("div");
+  bubble.className = "chat-msg__bubble";
+  bubble.innerHTML = role === "assistant"
+    ? renderChatMarkdown(content)
+    : escapeHtml(content);
+
+  const timeEl = document.createElement("div");
+  timeEl.className = "chat-msg__time";
+  timeEl.textContent = formatTime(new Date());
+
+  const inner = document.createElement("div");
+  inner.style.cssText = "display:flex;flex-direction:column;max-width:80%;";
+  inner.appendChild(bubble);
+  inner.appendChild(timeEl);
+
+  if (role === "assistant") {
+    wrapper.appendChild(avatar);
+    wrapper.appendChild(inner);
+  } else {
+    wrapper.appendChild(inner);
+    wrapper.appendChild(avatar);
+  }
+
+  chatMessages.appendChild(wrapper);
+  scrollToBottom();
+}
+
+// ── Typing indicator ─────────────────────────────────────────
+let typingEl = null;
+
+function showTyping() {
+  if (typingEl) return;
+  const emptyEl = document.getElementById("chat-empty");
+  if (emptyEl) emptyEl.style.display = "none";
+
+  typingEl = document.createElement("div");
+  typingEl.className = "chat-msg chat-msg--assistant chat-typing";
+  typingEl.setAttribute("aria-label", "MassarAI is typing");
+
+  const avatar = document.createElement("div");
+  avatar.className = "chat-msg__avatar";
+  avatar.textContent = "AI";
+  avatar.setAttribute("aria-hidden", "true");
+
+  const dots = document.createElement("div");
+  dots.className = "chat-typing__dots";
+  dots.innerHTML = [
+    '<div class="chat-typing__dot"></div>',
+    '<div class="chat-typing__dot"></div>',
+    '<div class="chat-typing__dot"></div>'
+  ].join("");
+
+  typingEl.appendChild(avatar);
+  typingEl.appendChild(dots);
+  chatMessages.appendChild(typingEl);
+  scrollToBottom();
+}
+
+function hideTyping() {
+  if (typingEl) { typingEl.remove(); typingEl = null; }
+}
+
+// ── Scroll to bottom ─────────────────────────────────────────
+function scrollToBottom() {
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+// ── Show inline error pill ─────────────────────────────────────
+function appendErrorPill(message) {
+  hideTyping();
+  const pill = document.createElement("div");
+  pill.className = "chat-error-pill";
+  pill.textContent = message;
+  chatMessages.appendChild(pill);
+  scrollToBottom();
+}
+
+// ── Unread badge on FAB ──────────────────────────────────────
+function showUnreadBadge() {
+  if (chatFab.querySelector(".chat-badge")) return;
+  const badge = document.createElement("span");
+  badge.className = "chat-badge";
+  badge.textContent = "1";
+  badge.setAttribute("aria-label", "1 new message");
+  chatFab.appendChild(badge);
+}
+
+// ── Send message to API ──────────────────────────────────────
+async function sendMessage(text) {
+  if (chatBusy || !text.trim()) return;
+  chatBusy = true;
+
+  const userText = text.trim();
+
+  // Hide suggestion pills once first message is sent
+  if (chatSuggestions) chatSuggestions.style.display = "none";
+
+  // 1. Append user bubble
+  appendMessage("user", userText);
+
+  // 2. Add to in-memory history
+  chatHistory.push({ role: "user", content: userText });
+
+  // 3. Clear & disable input while waiting
+  chatInput.value = "";
+  chatInput.style.height = "42px";
+  chatSendBtn.disabled = true;
+  chatInput.disabled = true;
+
+  // 4. Show animated typing indicator
+  showTyping();
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/guidance/chat`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ messages: chatHistory })
+    });
+
+    hideTyping();
+
+    if (response.status === 401 || response.status === 403) {
+      handleSessionExpiry();
+      return;
+    }
+
+    if (response.status === 429) {
+      appendErrorPill("MassarAI is temporarily busy. Please wait a moment and try again.");
+      chatHistory.pop(); // Allow retry
+      return;
+    }
+
+    let data = {};
+    try { data = await response.json(); } catch (_) {}
+
+    if (response.ok && data.reply) {
+      // 5. Append assistant reply and update history
+      appendMessage("assistant", data.reply);
+      chatHistory.push({ role: "assistant", content: data.reply });
+
+      // Show unread badge on FAB if panel is closed
+      if (!chatIsOpen) showUnreadBadge();
+    } else {
+      appendErrorPill(data.error || "An unexpected error occurred. Please try again.");
+      chatHistory.pop(); // Remove failed user message
+    }
+
+  } catch (err) {
+    console.error("[chat] Network error:", err);
+    hideTyping();
+    appendErrorPill("Could not reach MassarAI. Please check your connection.");
+    chatHistory.pop();
+  } finally {
+    chatBusy = false;
+    chatInput.disabled = false;
+    chatInput.focus();
+    updateSendBtn();
+  }
+}
+
+// ── Clear conversation ────────────────────────────────────────
+function clearConversation() {
+  chatHistory = [];
+  chatMessages.innerHTML = "";
+
+  // Re-inject the welcome empty state
+  const emptyDiv = document.createElement("div");
+  emptyDiv.className = "chat-empty";
+  emptyDiv.id = "chat-empty";
+  emptyDiv.innerHTML = `
+    <div class="chat-empty__icon">
+      <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#6741d9" stroke-width="1.8" aria-hidden="true">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+      </svg>
+    </div>
+    <div class="chat-empty__title">Hello! I'm MassarAI 🇲🇦</div>
+    <p class="chat-empty__subtitle">Ask me anything about your Baccalaureate results, university tracks, or higher-education pathways in Morocco.</p>
+  `;
+  chatMessages.appendChild(emptyDiv);
+
+  // Restore suggestion pills
+  if (chatSuggestions) chatSuggestions.style.display = "flex";
+}
+
+if (chatClearBtn) {
+  chatClearBtn.addEventListener("click", () => {
+    if (chatHistory.length > 0 && !chatBusy) clearConversation();
+  });
+}
+
+// ── Textarea auto-resize ──────────────────────────────────────
+function updateSendBtn() {
+  chatSendBtn.disabled = chatInput.value.trim().length === 0 || chatBusy;
+}
+
+chatInput.addEventListener("input", () => {
+  chatInput.style.height = "42px";
+  chatInput.style.height = Math.min(chatInput.scrollHeight, 100) + "px";
+  updateSendBtn();
+});
+
+// Send on Enter (Shift+Enter = newline)
+chatInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    if (!chatSendBtn.disabled) sendMessage(chatInput.value);
+  }
+});
+
+chatSendBtn.addEventListener("click", () => {
+  sendMessage(chatInput.value);
+});
+
+// ── Suggested prompt pills ────────────────────────────────────
+if (chatSuggestions) {
+  chatSuggestions.querySelectorAll(".chat-suggestion-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const prompt = btn.dataset.prompt;
+      if (prompt && !chatBusy) {
+        openChat();
+        // Small delay so panel finishes animating in before we append
+        setTimeout(() => sendMessage(prompt), 80);
+      }
+    });
+  });
+}
+
+// ── Guidance Report Logic ────────────────────────────────────
 
 const guidanceBtn          = document.getElementById("guidance-btn");
 const guidanceBtnIcon      = document.getElementById("guidance-btn-icon");
@@ -353,44 +679,52 @@ function renderMarkdownToHtml(md) {
 
 function openGuidanceModal(data) {
   // Populate meta bar
-  guidanceMetaResult.textContent  = data.result  || "—";
-  guidanceMetaAvg.textContent     = data.overall_average || "—";
-  guidanceMetaMention.textContent = data.mention || "—";
-  guidanceModalMeta.style.display = "flex";
+  if (guidanceMetaResult)  guidanceMetaResult.textContent  = data.result  || "—";
+  if (guidanceMetaAvg)     guidanceMetaAvg.textContent     = data.overall_average || "—";
+  if (guidanceMetaMention) guidanceMetaMention.textContent = data.mention || "—";
+  if (guidanceModalMeta)   guidanceModalMeta.style.display = "flex";
 
   // Colour-code the result in the meta bar
-  guidanceMetaResult.style.color =
-    data.result === "Admis"   ? "#2f9e44" :
-    data.result === "Ajourné" ? "#c92a2a" : "#495057";
+  if (guidanceMetaResult) {
+    guidanceMetaResult.style.color =
+      data.result === "Admis"   ? "#2f9e44" :
+      data.result === "Ajourné" ? "#c92a2a" : "#495057";
+  }
 
   // Render the markdown body
-  guidanceModalBody.innerHTML = renderMarkdownToHtml(data.guidance || "");
+  if (guidanceModalBody) guidanceModalBody.innerHTML = renderMarkdownToHtml(data.guidance || "");
 
-  guidanceModalBackdrop.style.display = "block";
-  document.body.style.overflow = "hidden";
-  guidanceModalClose.focus();
+  if (guidanceModalBackdrop) {
+    guidanceModalBackdrop.style.display = "block";
+    document.body.style.overflow = "hidden";
+  }
+  if (guidanceModalClose) guidanceModalClose.focus();
 }
 
 function closeGuidanceModal() {
-  guidanceModalBackdrop.style.display = "none";
+  if (guidanceModalBackdrop) guidanceModalBackdrop.style.display = "none";
   document.body.style.overflow = "";
-  guidanceModalBody.innerHTML = "";
-  guidanceModalMeta.style.display = "none";
+  if (guidanceModalBody) guidanceModalBody.innerHTML = "";
+  if (guidanceModalMeta) guidanceModalMeta.style.display = "none";
 }
 
 function setGuidanceBtnLoading(loading) {
-  guidanceBtn.disabled       = loading;
-  guidanceBtnIcon.hidden     = loading;
-  guidanceBtnSpinner.hidden  = !loading;
-  guidanceBtnLabel.textContent = loading ? "Generating…" : "Generate Guidance Report";
-  guidanceBtn.style.opacity  = loading ? "0.75" : "1";
-  guidanceBtn.style.cursor   = loading ? "not-allowed" : "pointer";
+  if (guidanceBtn) {
+    guidanceBtn.disabled       = loading;
+    guidanceBtn.style.opacity  = loading ? "0.75" : "1";
+    guidanceBtn.style.cursor   = loading ? "not-allowed" : "pointer";
+  }
+  if (guidanceBtnIcon)     guidanceBtnIcon.hidden     = loading;
+  if (guidanceBtnSpinner)  guidanceBtnSpinner.hidden  = !loading;
+  if (guidanceBtnLabel)    guidanceBtnLabel.textContent = loading ? "Generating…" : "Generate Guidance Report";
 }
 
 if (guidanceBtn) {
   guidanceBtn.addEventListener("click", async () => {
-    guidanceError.hidden = true;
-    guidanceError.textContent = "";
+    if (guidanceError) {
+      guidanceError.hidden = true;
+      guidanceError.textContent = "";
+    }
     setGuidanceBtnLoading(true);
 
     try {
@@ -413,13 +747,17 @@ if (guidanceBtn) {
       if (response.ok) {
         openGuidanceModal(data);
       } else {
-        guidanceError.hidden = false;
-        guidanceError.textContent = data.error || "Failed to generate guidance report. Please try again.";
+        if (guidanceError) {
+          guidanceError.hidden = false;
+          guidanceError.textContent = data.error || "Failed to generate guidance report. Please try again.";
+        }
       }
     } catch (err) {
       console.error("Error generating guidance report:", err);
-      guidanceError.hidden = false;
-      guidanceError.textContent = "Could not connect to the server. Please check your internet connection.";
+      if (guidanceError) {
+        guidanceError.hidden = false;
+        guidanceError.textContent = "Could not connect to the server. Please check your internet connection.";
+      }
     } finally {
       setGuidanceBtnLoading(false);
     }
@@ -441,10 +779,10 @@ if (guidanceModalBackdrop) {
 }
 // Close on Escape key
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && guidanceModalBackdrop.style.display === "block") {
+  if (e.key === "Escape" && guidanceModalBackdrop && guidanceModalBackdrop.style.display === "block") {
     closeGuidanceModal();
   }
 });
 
-// Run load on start
+// ── Kick off results fetch ────────────────────────────────────
 loadResults();
