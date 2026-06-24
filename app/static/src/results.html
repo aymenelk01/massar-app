@@ -143,11 +143,76 @@
               </svg>
               You can print this page or save as PDF by pressing Ctrl + P
             </p>
+
+            <!-- AI Guidance Section -->
+            <div id="guidance-section" style="margin-top: 32px; margin-bottom: 8px;">
+              <div style="background: linear-gradient(135deg, #e8f0fe, #f0e8fe); border: 1px solid #c5d1f0; border-radius: 12px; padding: 24px; text-align: center;">
+                <div style="display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 8px;">
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#3b5bdb" stroke-width="2" aria-hidden="true">
+                    <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"/><path d="M12 8v4m0 4h.01"/>
+                  </svg>
+                  <h2 style="font-size: 1.1rem; font-weight: 700; color: #3b5bdb; margin: 0;">AI Academic Guidance</h2>
+                </div>
+                <p style="font-size: 0.9rem; color: #4a4a6a; margin-bottom: 18px; line-height: 1.5;">
+                  Get a personalized academic guidance report powered by Amazon Bedrock — including higher education pathway recommendations tailored to your results.
+                </p>
+                <button id="guidance-btn" type="button" aria-label="Generate my academic guidance report"
+                  style="display: inline-flex; align-items: center; gap: 8px; background: #3b5bdb; color: #fff; border: none; border-radius: 8px; padding: 12px 28px; font-size: 0.95rem; font-weight: 600; cursor: pointer; transition: background 160ms ease; font-family: inherit;">
+                  <svg id="guidance-btn-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+                  </svg>
+                  <svg id="guidance-btn-spinner" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true" hidden
+                    style="animation: spin 0.8s linear infinite;">
+                    <circle cx="12" cy="12" r="10" stroke-opacity="0.25"/>
+                    <path d="M12 2a10 10 0 0 1 10 10" stroke-opacity="1"/>
+                  </svg>
+                  <span id="guidance-btn-label">Generate Guidance Report</span>
+                </button>
+                <div id="guidance-error" role="alert" hidden
+                  style="margin-top: 14px; background: #fff0f0; border: 1px solid #ffc9c9; border-radius: 8px; padding: 10px 14px; color: #c92a2a; font-size: 0.875rem; text-align: left;">
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
       </div>
     </main>
+
+    <!-- AI Guidance Modal -->
+    <div id="guidance-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="guidance-modal-title"
+      style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 1000; overflow-y: auto; padding: 24px 16px;">
+      <div style="background: #fff; border-radius: 16px; max-width: 760px; margin: 40px auto; box-shadow: 0 24px 80px rgba(0,0,0,0.2); overflow: hidden;">
+        <!-- Modal header -->
+        <div style="background: linear-gradient(135deg, #3b5bdb, #6741d9); padding: 24px 28px; display: flex; align-items: center; justify-content: space-between;">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#fff" stroke-width="2" aria-hidden="true">
+              <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"/><path d="M12 8v4m0 4h.01"/>
+            </svg>
+            <h2 id="guidance-modal-title" style="color: #fff; font-size: 1.15rem; font-weight: 700; margin: 0;">Your Academic Guidance Report</h2>
+          </div>
+          <button id="guidance-modal-close" type="button" aria-label="Close guidance report"
+            style="background: rgba(255,255,255,0.15); border: none; border-radius: 6px; padding: 6px 10px; color: #fff; font-size: 1.2rem; cursor: pointer; line-height: 1;">✕</button>
+        </div>
+        <!-- Meta bar -->
+        <div id="guidance-modal-meta" style="display: none; background: #f8f9fa; border-bottom: 1px solid #e9ecef; padding: 12px 28px; display: flex; flex-wrap: wrap; gap: 20px; font-size: 0.85rem; color: #495057;">
+          <span>Result: <strong id="guidance-meta-result">—</strong></span>
+          <span>Moyenne Générale: <strong id="guidance-meta-avg">—</strong>/20</span>
+          <span>Mention: <strong id="guidance-meta-mention">—</strong></span>
+        </div>
+        <!-- Body -->
+        <div id="guidance-modal-body" style="padding: 28px; line-height: 1.7; color: #212529; font-size: 0.95rem; max-height: 70vh; overflow-y: auto;">
+          <!-- Populated by JS -->
+        </div>
+        <!-- Footer -->
+        <div style="padding: 16px 28px; border-top: 1px solid #e9ecef; text-align: right;">
+          <button id="guidance-modal-close-footer" type="button"
+            style="background: #3b5bdb; color: #fff; border: none; border-radius: 8px; padding: 10px 24px; font-size: 0.9rem; font-weight: 600; cursor: pointer; font-family: inherit;">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
 
     <!-- Footer -->
     <footer class="gov-footer">

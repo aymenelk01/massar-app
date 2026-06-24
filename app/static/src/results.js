@@ -296,5 +296,155 @@ if (downloadDiplomaBtn) {
   });
 }
 
+// ── Guidance Report Logic ────────────────────────────────────
+
+// Inject spinner keyframe into the document once
+(function injectSpinnerKeyframe() {
+  const style = document.createElement("style");
+  style.textContent = `@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`;
+  document.head.appendChild(style);
+})();
+
+const guidanceBtn          = document.getElementById("guidance-btn");
+const guidanceBtnIcon      = document.getElementById("guidance-btn-icon");
+const guidanceBtnSpinner   = document.getElementById("guidance-btn-spinner");
+const guidanceBtnLabel     = document.getElementById("guidance-btn-label");
+const guidanceError        = document.getElementById("guidance-error");
+const guidanceModalBackdrop = document.getElementById("guidance-modal-backdrop");
+const guidanceModalBody    = document.getElementById("guidance-modal-body");
+const guidanceModalMeta    = document.getElementById("guidance-modal-meta");
+const guidanceMetaResult   = document.getElementById("guidance-meta-result");
+const guidanceMetaAvg      = document.getElementById("guidance-meta-avg");
+const guidanceMetaMention  = document.getElementById("guidance-meta-mention");
+const guidanceModalClose   = document.getElementById("guidance-modal-close");
+const guidanceModalCloseFooter = document.getElementById("guidance-modal-close-footer");
+
+/**
+ * Convert the AI's markdown response (## headers + paragraphs) to safe HTML.
+ * This is a minimal, no-library renderer — it only handles what Nova Pro will output.
+ */
+function renderMarkdownToHtml(md) {
+  return md
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .split("\n")
+    .map(line => {
+      if (line.startsWith("## ")) {
+        return `<h3 style="font-size:1.05rem;font-weight:700;color:#3b5bdb;margin:20px 0 8px;border-bottom:2px solid #e0e7ff;padding-bottom:4px;">${line.slice(3)}</h3>`;
+      }
+      if (line.startsWith("### ")) {
+        return `<h4 style="font-size:0.95rem;font-weight:600;color:#495057;margin:14px 0 6px;">${line.slice(4)}</h4>`;
+      }
+      if (/^\s*[-*•] /.test(line)) {
+        const text = line.replace(/^\s*[-*•] /, "")
+          .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+        return `<li style="margin-bottom:4px;">${text}</li>`;
+      }
+      // Bold (**text**) inside regular lines
+      const withBold = line.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+      if (withBold.trim() === "") return "<br/>";
+      return `<p style="margin:6px 0;">${withBold}</p>`;
+    })
+    .join("\n")
+    // Wrap consecutive <li> elements in <ul>
+    .replace(/(<li[^>]*>[\s\S]*?<\/li>\s*)+/g, match => `<ul style="padding-left:20px;margin:8px 0;">${match}</ul>`);
+}
+
+function openGuidanceModal(data) {
+  // Populate meta bar
+  guidanceMetaResult.textContent  = data.result  || "—";
+  guidanceMetaAvg.textContent     = data.overall_average || "—";
+  guidanceMetaMention.textContent = data.mention || "—";
+  guidanceModalMeta.style.display = "flex";
+
+  // Colour-code the result in the meta bar
+  guidanceMetaResult.style.color =
+    data.result === "Admis"   ? "#2f9e44" :
+    data.result === "Ajourné" ? "#c92a2a" : "#495057";
+
+  // Render the markdown body
+  guidanceModalBody.innerHTML = renderMarkdownToHtml(data.guidance || "");
+
+  guidanceModalBackdrop.style.display = "block";
+  document.body.style.overflow = "hidden";
+  guidanceModalClose.focus();
+}
+
+function closeGuidanceModal() {
+  guidanceModalBackdrop.style.display = "none";
+  document.body.style.overflow = "";
+  guidanceModalBody.innerHTML = "";
+  guidanceModalMeta.style.display = "none";
+}
+
+function setGuidanceBtnLoading(loading) {
+  guidanceBtn.disabled       = loading;
+  guidanceBtnIcon.hidden     = loading;
+  guidanceBtnSpinner.hidden  = !loading;
+  guidanceBtnLabel.textContent = loading ? "Generating…" : "Generate Guidance Report";
+  guidanceBtn.style.opacity  = loading ? "0.75" : "1";
+  guidanceBtn.style.cursor   = loading ? "not-allowed" : "pointer";
+}
+
+if (guidanceBtn) {
+  guidanceBtn.addEventListener("click", async () => {
+    guidanceError.hidden = true;
+    guidanceError.textContent = "";
+    setGuidanceBtnLoading(true);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/guidance/generate`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json"
+        }
+      });
+
+      if (response.status === 401 || response.status === 403) {
+        handleSessionExpiry();
+        return;
+      }
+
+      let data = {};
+      try { data = await response.json(); } catch (_) {}
+
+      if (response.ok) {
+        openGuidanceModal(data);
+      } else {
+        guidanceError.hidden = false;
+        guidanceError.textContent = data.error || "Failed to generate guidance report. Please try again.";
+      }
+    } catch (err) {
+      console.error("Error generating guidance report:", err);
+      guidanceError.hidden = false;
+      guidanceError.textContent = "Could not connect to the server. Please check your internet connection.";
+    } finally {
+      setGuidanceBtnLoading(false);
+    }
+  });
+}
+
+// Modal close handlers
+if (guidanceModalClose) {
+  guidanceModalClose.addEventListener("click", closeGuidanceModal);
+}
+if (guidanceModalCloseFooter) {
+  guidanceModalCloseFooter.addEventListener("click", closeGuidanceModal);
+}
+// Close on backdrop click (outside the modal card)
+if (guidanceModalBackdrop) {
+  guidanceModalBackdrop.addEventListener("click", (e) => {
+    if (e.target === guidanceModalBackdrop) closeGuidanceModal();
+  });
+}
+// Close on Escape key
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && guidanceModalBackdrop.style.display === "block") {
+    closeGuidanceModal();
+  }
+});
+
 // Run load on start
 loadResults();
