@@ -81,6 +81,8 @@ jobs:
           tags: |
             ${{ env.IMAGE_URI }}:sha-${{ github.sha }}
             ${{ env.IMAGE_URI }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max  
 
       - name: Run Flyway migrations
         run: |
@@ -181,6 +183,8 @@ jobs:
           tags: |
             ${{ env.IMAGE_URI }}:sha-${{ github.sha }}
             ${{ env.IMAGE_URI }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max  
           
       - name: Download active task definition
         run: |
