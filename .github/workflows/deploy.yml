@@ -8,6 +8,7 @@ on:
   repository_dispatch:
     types:
       - terraform-apply-completed  
+  workflow_dispatch:    
 
 permissions:
   contents: read
@@ -17,9 +18,9 @@ jobs:
   check-changes:
     runs-on: ubuntu-latest
     outputs:
-      app: ${{ github.event_name != 'repository_dispatch' && steps.filter.outputs.app == 'true' }}
-      static: ${{ github.event_name == 'repository_dispatch' || steps.filter.outputs.static == 'true' }}
-      migrations: ${{ github.event_name != 'repository_dispatch' && steps.filter.outputs.migrations == 'true' }}
+      app: ${{ github.event_name == 'workflow_dispatch' || github.event_name != 'repository_dispatch' && steps.filter.outputs.app == 'true' }}
+      static: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch' || steps.filter.outputs.static == 'true' }}
+      migrations: ${{ github.event_name == 'workflow_dispatch' || github.event_name != 'repository_dispatch' && steps.filter.outputs.migrations == 'true' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
