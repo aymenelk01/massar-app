@@ -44,8 +44,9 @@ const s3Client      = new S3Client({ region: REGION });
 const cognitoClient = new CognitoIdentityProviderClient({ region: REGION });
 const bedrockClient = new BedrockRuntimeClient({ region: REGION });
 
-// Global holder for the MySQL connection pool
-let dbPool = null;
+// Global holders for the MySQL connection pools
+let dbWriterPool = null;
+let dbReaderPool = null;
 
 // Initialize JWT Verifier dynamically if environment variables are present
 let jwtVerifier = null;
@@ -146,58 +147,98 @@ async function createDbPool(dbHost, dbUsername, dbName) {
 }
 
 /**
- * Returns the active MySQL connection pool, creating it on first call.
- * Subsequent calls return the cached pool until it is rotated by
- * schedulePoolRotation().
+ * Returns the active MySQL connection pool for writes, creating it on first call.
  */
-async function getDbPool() {
-  if (dbPool) return dbPool;
+async function getWriterDbPool() {
+  if (dbWriterPool) return dbWriterPool;
 
-  const dbHost = process.env.RDS_PROXY_ENDPOINT;
+  const dbHost = process.env.RDS_PROXY_WRITER_ENDPOINT || process.env.RDS_PROXY_ENDPOINT;
   const dbUsername = process.env.DB_USERNAME || "db_iam_user";
   const dbName = process.env.DB_NAME || "massardb";
 
   if (!dbHost) {
-    throw new Error("RDS_PROXY_ENDPOINT environment variable is not defined");
+    throw new Error("Neither RDS_PROXY_WRITER_ENDPOINT nor RDS_PROXY_ENDPOINT environment variable is defined");
   }
 
-  console.log(`Creating IAM-authenticated MySQL pool → RDS Proxy: ${dbHost} as '${dbUsername}'`);
+  console.log(`Creating IAM-authenticated MySQL WRITER pool → RDS Proxy: ${dbHost} as '${dbUsername}'`);
 
   try {
-    dbPool = await createDbPool(dbHost, dbUsername, dbName);
-    schedulePoolRotation(dbHost, dbUsername, dbName);
-    return dbPool;
+    dbWriterPool = await createDbPool(dbHost, dbUsername, dbName);
+    schedulePoolRotation(dbHost, dbUsername, dbName, "writer");
+    return dbWriterPool;
   } catch (error) {
-    console.error("MySQL Connection Pool initialization failed:", error.message);
-    dbPool = null;
+    console.error("MySQL WRITER Connection Pool initialization failed:", error.message);
+    dbWriterPool = null;
     throw error;
   }
 }
 
 /**
- * Rotates the pool every 14 minutes so the baked-in IAM token is always
- * fresh (tokens expire after 15 minutes). The old pool is ended gracefully
- * so any in-flight queries can drain before connections are closed
+ * Returns the active MySQL connection pool for reads, creating it on first call.
  */
-function schedulePoolRotation(dbHost, dbUsername, dbName) {
+async function getReaderDbPool() {
+  if (dbReaderPool) return dbReaderPool;
+
+  const dbHost = process.env.RDS_PROXY_READER_ENDPOINT || process.env.RDS_PROXY_ENDPOINT;
+  const dbUsername = process.env.DB_USERNAME || "db_iam_user";
+  const dbName = process.env.DB_NAME || "massardb";
+
+  if (!dbHost) {
+    throw new Error("Neither RDS_PROXY_READER_ENDPOINT nor RDS_PROXY_ENDPOINT environment variable is defined");
+  }
+
+  console.log(`Creating IAM-authenticated MySQL READER pool → RDS Proxy: ${dbHost} as '${dbUsername}'`);
+
+  try {
+    dbReaderPool = await createDbPool(dbHost, dbUsername, dbName);
+    schedulePoolRotation(dbHost, dbUsername, dbName, "reader");
+    return dbReaderPool;
+  } catch (error) {
+    console.error("MySQL READER Connection Pool initialization failed:", error.message);
+    dbReaderPool = null;
+    throw error;
+  }
+}
+
+/**
+ * Fallback alias for backward compatibility.
+ */
+async function getDbPool() {
+  return getWriterDbPool();
+}
+
+/**
+ * Rotates the specified pool every 14 minutes so the baked-in IAM token is always
+ * fresh (tokens expire after 15 minutes). The old pool is ended gracefully.
+ */
+function schedulePoolRotation(dbHost, dbUsername, dbName, type) {
   // 14 minutes — 1 minute before the 15-minute IAM token expiry
   const ROTATION_INTERVAL_MS = 14 * 60 * 1000;
 
   setTimeout(async () => {
     try {
-      console.log("[db] Rotating MySQL pool with a fresh IAM token...");
+      console.log(`[db] Rotating MySQL ${type} pool with a fresh IAM token...`);
       const newPool = await createDbPool(dbHost, dbUsername, dbName);
-      const oldPool = dbPool;
-      dbPool = newPool;                // swap atomically; in-flight queries finish on oldPool
-      schedulePoolRotation(dbHost, dbUsername, dbName); // schedule next rotation
-      oldPool.end((err) => {
-        if (err) console.warn("[db] Warning while draining old pool:", err.message);
-        else console.log("[db] Old pool drained and closed.");
-      });
+      const oldPool = type === "writer" ? dbWriterPool : dbReaderPool;
+
+      if (type === "writer") {
+        dbWriterPool = newPool;
+      } else {
+        dbReaderPool = newPool;
+      }
+
+      schedulePoolRotation(dbHost, dbUsername, dbName, type); // schedule next rotation
+
+      if (oldPool) {
+        oldPool.end((err) => {
+          if (err) console.warn(`[db] Warning while draining old ${type} pool:`, err.message);
+          else console.log(`[db] Old ${type} pool drained and closed.`);
+        });
+      }
     } catch (err) {
-      console.error("[db] Pool rotation failed, retrying in 60s:", err.message);
+      console.error(`[db] ${type} pool rotation failed, retrying in 60s:`, err.message);
       // Retry rotation in 60s without killing the existing (still valid) pool
-      setTimeout(() => schedulePoolRotation(dbHost, dbUsername, dbName), 60_000);
+      setTimeout(() => schedulePoolRotation(dbHost, dbUsername, dbName, type), 60_000);
     }
   }, ROTATION_INTERVAL_MS);
 }
@@ -445,7 +486,7 @@ app.get("/api/results", authMiddleware, async (req, res) => {
 
   // 2. Cache Miss: Query Aurora MySQL via RDS Proxy
   try {
-    const db = await getDbPool();
+    const db = await getReaderDbPool();
     
     // Fetch Student data
     const [students] = await db.query(
@@ -519,7 +560,7 @@ app.get("/api/student/diploma", authMiddleware, async (req, res) => {
   }
 
   try {
-    const db = await getDbPool();
+    const db = await getReaderDbPool();
     
     // Check student status
     const [students] = await db.query(
@@ -580,7 +621,7 @@ app.get("/api/student/diploma", authMiddleware, async (req, res) => {
  */
 app.get("/api/teacher/students", authMiddleware, teacherMiddleware, async (req, res) => {
   try {
-    const db = await getDbPool();
+    const db = await getReaderDbPool();
     const [rows] = await db.query(`
       SELECT 
         s.id, 
@@ -674,7 +715,7 @@ app.post("/api/teacher/grades", authMiddleware, teacherMiddleware, async (req, r
   }
 
   try {
-    const db = await getDbPool();
+    const db = await getWriterDbPool();
 
     // 1. Get student ID
     const [students] = await db.query(
@@ -768,7 +809,7 @@ app.post("/api/admin/release-results", authMiddleware, adminMiddleware, async (r
   }
 
   try {
-    const db = await getDbPool();
+    const db = await getReaderDbPool();
 
     // Query all students and their subject grades
     const [rows] = await db.query(`
@@ -863,7 +904,7 @@ app.post("/api/admin/generate-diplomas", authMiddleware, adminMiddleware, async 
   }
 
   try {
-    const db = await getDbPool();
+    const db = await getReaderDbPool();
 
     // Query all admitted students and retrieve their average and branch directly
     const [rows] = await db.query(`
@@ -954,7 +995,7 @@ app.post("/api/admin/generate-diplomas", authMiddleware, adminMiddleware, async 
  */
 app.get("/api/admin/teachers", authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const db = await getDbPool();
+    const db = await getReaderDbPool();
     const [rows] = await db.query(
       "SELECT id, username, full_name, email, phone, subject, enabled FROM teachers ORDER BY id DESC"
     );
@@ -983,7 +1024,7 @@ app.post("/api/admin/teachers", authMiddleware, adminMiddleware, async (req, res
   const cleanSubject = subject.trim();
 
   try {
-    const db = await getDbPool();
+    const db = await getWriterDbPool();
 
     // 1. Insert teacher into database first
     await db.query(
@@ -1063,7 +1104,7 @@ app.put("/api/admin/teachers/:username", authMiddleware, adminMiddleware, async 
   const cleanSubject = subject.trim();
 
   try {
-    const db = await getDbPool();
+    const db = await getWriterDbPool();
 
     // Check if teacher exists
     const [teachers] = await db.query(
@@ -1126,7 +1167,7 @@ app.delete("/api/admin/teachers/:username", authMiddleware, adminMiddleware, asy
   const username = req.params.username;
 
   try {
-    const db = await getDbPool();
+    const db = await getWriterDbPool();
 
     // Delete from MySQL database
     await db.query(
@@ -1164,7 +1205,7 @@ app.delete("/api/admin/teachers/:username", authMiddleware, adminMiddleware, asy
  */
 app.get("/api/admin/students", authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const db = await getDbPool();
+    const db = await getReaderDbPool();
     const [rows] = await db.query(
       "SELECT id, code_massar, full_name, email, phone, branch, level, average, result, enabled FROM students ORDER BY id DESC"
     );
@@ -1224,7 +1265,7 @@ app.post("/api/admin/students", authMiddleware, adminMiddleware, async (req, res
   const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
   try {
-    const db = await getDbPool();
+    const db = await getWriterDbPool();
 
     while (attempts < maxAttempts && !success) {
       attempts++;
@@ -1336,7 +1377,7 @@ app.put("/api/admin/students/:id", authMiddleware, adminMiddleware, async (req, 
   const cleanLevel = (level || "2ème Bac").trim();
 
   try {
-    const db = await getDbPool();
+    const db = await getWriterDbPool();
 
     // Check if student exists & get massar code for cache invalidation
     const [students] = await db.query(
@@ -1436,7 +1477,7 @@ app.delete("/api/admin/students/:id", authMiddleware, adminMiddleware, async (re
   }
 
   try {
-    const db = await getDbPool();
+    const db = await getWriterDbPool();
 
     // Get student Massar code first for cache invalidation
     const [students] = await db.query(
@@ -1511,7 +1552,7 @@ app.put("/api/admin/students/:id/status", authMiddleware, adminMiddleware, async
   const targetStatus = !!enabled;
 
   try {
-    const db = await getDbPool();
+    const db = await getWriterDbPool();
 
     // 1. Get student's code_massar
     const [students] = await db.query(
@@ -1583,7 +1624,7 @@ app.put("/api/admin/teachers/:username/status", authMiddleware, adminMiddleware,
   const targetStatus = !!enabled;
 
   try {
-    const db = await getDbPool();
+    const db = await getWriterDbPool();
 
     // 1. Check if teacher exists
     const [teachers] = await db.query(
@@ -1645,7 +1686,7 @@ async function syncExistingUsersToCognito() {
   }
 
   try {
-    const db = await getDbPool();
+    const db = await getReaderDbPool();
     const [students] = await db.query("SELECT code_massar, full_name, email, phone FROM students");
     console.log(`Checking/syncing ${students.length} students to Cognito User Pool...`);
 
@@ -1712,7 +1753,7 @@ async function syncExistingTeachersToCognito() {
   }
 
   try {
-    const db = await getDbPool();
+    const db = await getReaderDbPool();
     const [teachers] = await db.query("SELECT username, full_name, email, phone, subject FROM teachers");
     console.log(`Checking/syncing ${teachers.length} teachers to Cognito User Pool...`);
 
@@ -1780,7 +1821,8 @@ async function startupInitialization() {
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      await getDbPool();
+      await getWriterDbPool();
+      await getReaderDbPool();
       await syncExistingUsersToCognito();
       await syncExistingTeachersToCognito();
       console.log("Existing users and teachers synchronization completed successfully.");
@@ -1829,7 +1871,7 @@ app.post("/api/guidance/generate", authMiddleware, async (req, res) => {
 
   try {
     // ── 2. Fetch student record from Aurora ───────────────────────────────
-    const db = await getDbPool();
+    const db = await getReaderDbPool();
 
     const [students] = await db.query(
       `SELECT id, full_name, branch, level, result,
@@ -2242,7 +2284,7 @@ app.post("/api/guidance/chat", authMiddleware, async (req, res) => {
     // ── 4. Fetch student grades from Aurora ────────────────────────────────
     //   Always fetch on every request so the system prompt always reflects the
     //   latest data (teachers may have updated grades between turns).
-    const db = await getDbPool();
+    const db = await getReaderDbPool();
 
     const [students] = await db.query(
       `SELECT id, full_name, branch, level, result,
